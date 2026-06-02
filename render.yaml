@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: scoutai
+    env: python
+    # players_clean.csv כבר נמצא ב-repo, ו-TF-IDF/clustering נבנים ב-startup,
+    # לכן אין צורך להריץ data_prep.py בבנייה (הנתונים הגולמיים אינם ב-repo).
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: FOOTBALL_DATA_API_KEY
+        sync: false

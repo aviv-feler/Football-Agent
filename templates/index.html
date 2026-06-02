@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ScoutAI - Football Intelligence Platform</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0a0e1a;
+      --bg2:         #111827;
+      --bg3:         #1a2235;
+      --card:        #1e2d42;
+      --green:       #00ff87;
+      --green-dim:   #00cc6a;
+      --green-glow:  rgba(0,255,135,.18);
+      --text:        #e8eaf0;
+      --text-muted:  #8899aa;
+      --border:      #2a3a52;
+      --user-bubble: #00ff87;
+      --bot-bubble:  #1e2d42;
+      --radius:      14px;
+      --font:        'Segoe UI', system-ui, sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.6;
+    }
+
+    /* ── Scrollbar ──────────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg2); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Background grid ───────────────────────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 60px 60px;
+      opacity: .25;
+      pointer-events: none;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    .page { position: relative; z-index: 1; min-height: 100vh; display: flex; flex-direction: column; }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 40px;
+      background: rgba(10,14,26,.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .logo {
+      display: flex; align-items: center; gap: 12px;
+      font-size: 1.5rem; font-weight: 800; letter-spacing: -0.5px;
+      color: var(--green);
+      text-shadow: 0 0 20px var(--green-glow);
+    }
+    .logo-ball { font-size: 1.8rem; }
+    .logo-sub  { font-size: .75rem; font-weight: 400; color: var(--text-muted); display: block; }
+    .header-badge {
+      background: var(--green-glow);
+      border: 1px solid var(--green-dim);
+      color: var(--green);
+      padding: 4px 14px; border-radius: 20px; font-size: .78rem;
+    }
+
+    /* ── Hero ───────────────────────────────────────────────────────────── */
+    .hero {
+      text-align: center; padding: 60px 20px 30px;
+    }
+    .hero h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 900; letter-spacing: -1px;
+      background: linear-gradient(135deg, #fff 30%, var(--green));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.1; margin-bottom: 16px;
+    }
+    .hero p {
+      font-size: 1.05rem; color: var(--text-muted); max-width: 540px; margin: 0 auto 36px;
+    }
+
+    /* ── Feature pills ──────────────────────────────────────────────────── */
+    .features {
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 12px;
+      margin-bottom: 40px;
+    }
+    .feature-pill {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 30px; padding: 8px 18px;
+      font-size: .88rem; color: var(--text-muted);
+      transition: border-color .2s;
+    }
+    .feature-pill:hover { border-color: var(--green-dim); }
+    .feature-pill .icon { font-size: 1.1rem; }
+
+    /* ── Chat container ─────────────────────────────────────────────────── */
+    .chat-wrapper {
+      width: min(640px, 96vw);
+      margin: 0 auto 60px;
+      display: flex; flex-direction: column; gap: 0;
+    }
+
+    /* Example chips */
+    .chips {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;
+    }
+    .chip {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 20px; padding: 6px 14px;
+      font-size: .82rem; color: var(--text-muted);
+      cursor: pointer; transition: all .2s; white-space: nowrap;
+    }
+    .chip:hover {
+      background: var(--green-glow); border-color: var(--green-dim);
+      color: var(--green);
+    }
+
+    /* Chat window */
+    .chat-window {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius) var(--radius) 0 0;
+      height: 500px; overflow-y: auto;
+      padding: 20px; display: flex; flex-direction: column; gap: 16px;
+    }
+
+    /* Messages */
+    .msg { display: flex; gap: 10px; align-items: flex-end; max-width: 90%; }
+    .msg.user  { flex-direction: row-reverse; align-self: flex-end; }
+    .msg.bot   { align-self: flex-start; }
+
+    .avatar {
+      width: 32px; height: 32px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem; flex-shrink: 0;
+    }
+    .msg.user .avatar { background: var(--green); color: var(--bg); }
+    .msg.bot  .avatar { background: var(--card); border: 1px solid var(--border); }
+
+    .bubble {
+      padding: 12px 16px; border-radius: var(--radius); font-size: .92rem;
+      line-height: 1.65; max-width: 100%;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .msg.user .bubble {
+      background: var(--green); color: #0a0e1a; font-weight: 500;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.bot .bubble {
+      background: var(--bot-bubble); border: 1px solid var(--border);
+      color: var(--text); border-bottom-left-radius: 4px;
+    }
+
+    /* Markdown-ish bold */
+    .bubble strong { color: var(--green); font-weight: 700; }
+
+    /* Typing indicator */
+    .typing-indicator {
+      display: none; align-items: center; gap: 6px; padding: 12px 16px;
+      background: var(--bot-bubble); border: 1px solid var(--border);
+      border-radius: var(--radius); border-bottom-left-radius: 4px;
+      width: fit-content;
+    }
+    .typing-indicator.visible { display: flex; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted);
+      animation: bounce 1.2s infinite;
+    }
+    .dot:nth-child(2) { animation-delay: .2s; }
+    .dot:nth-child(3) { animation-delay: .4s; }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30%           { transform: translateY(-8px); background: var(--green); }
+    }
+
+    /* Input bar */
+    .input-bar {
+      display: flex; gap: 0;
+      background: var(--card); border: 1px solid var(--border); border-top: none;
+      border-radius: 0 0 var(--radius) var(--radius);
+      overflow: hidden;
+    }
+    #user-input {
+      flex: 1; background: transparent; border: none; outline: none;
+      color: var(--text); font-size: .95rem; padding: 16px 18px;
+      font-family: var(--font); resize: none; height: 56px;
+      direction: auto;
+    }
+    #user-input::placeholder { color: var(--text-muted); }
+    #send-btn {
+      background: var(--green); border: none; cursor: pointer;
+      padding: 0 22px; font-size: 1.3rem; color: var(--bg);
+      transition: background .2s;
+      display: flex; align-items: center;
+    }
+    #send-btn:hover  { background: var(--green-dim); }
+    #send-btn:active { background: #00b359; }
+    #send-btn:disabled { background: var(--border); cursor: not-allowed; }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    footer {
+      text-align: center; padding: 24px;
+      color: var(--text-muted); font-size: .8rem;
+      border-top: 1px solid var(--border);
+    }
+    footer a { color: var(--green-dim); text-decoration: none; }
+
+    /* ── Responsive ─────────────────────────────────────────────────────── */
+    @media (max-width: 480px) {
+      header { padding: 14px 20px; }
+      .hero  { padding: 40px 16px 20px; }
+      .chat-window { height: 420px; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <span class="logo-ball">⚽</span>
+      <div>
+        ScoutAI
+        <span class="logo-sub">Football Intelligence Platform</span>
+      </div>
+    </div>
+    <span class="header-badge">AI Powered</span>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <h1>Your AI-Powered<br>Football Scout</h1>
+    <p>Ask anything about players, stats, match predictions, and live standings — in Hebrew or English.</p>
+
+    <div class="features">
+      <div class="feature-pill"><span class="icon">🔍</span> Player Scout &amp; Search</div>
+      <div class="feature-pill"><span class="icon">🤝</span> Similar Player Finder</div>
+      <div class="feature-pill"><span class="icon">🎯</span> Match Prediction</div>
+      <div class="feature-pill"><span class="icon">📊</span> Live Standings</div>
+      <div class="feature-pill"><span class="icon">⚠️</span> Anomaly Detection</div>
+    </div>
+  </section>
+
+  <!-- Chat -->
+  <div class="chat-wrapper">
+    <!-- Example chips -->
+    <div class="chips" id="chips">
+      <button class="chip" onclick="sendChip(this)">מצא שחקנים דומים למבאפה</button>
+      <button class="chip" onclick="sendChip(this)">חלוצים הכי טובים מתחת לגיל 22</button>
+      <button class="chip" onclick="sendChip(this)">נבא: ברזיל נגד צרפת</button>
+      <button class="chip" onclick="sendChip(this)">טבלת ה-Premier League</button>
+      <button class="chip" onclick="sendChip(this)">Find players similar to Mbappé</button>
+      <button class="chip" onclick="sendChip(this)">Best strikers under 23 from Europe</button>
+      <button class="chip" onclick="sendChip(this)">Predict Brazil vs France</button>
+    </div>
+
+    <!-- Window -->
+    <div class="chat-window" id="chat-window">
+      <!-- Welcome message -->
+      <div class="msg bot">
+        <div class="avatar">⚽</div>
+        <div class="bubble">
+          שלום! אני <strong>ScoutAI</strong>, הסוכן החכם שלך לכדורגל. 🏆
+
+אני יכול לעזור לך:
+• <strong>למצוא שחקנים</strong> לפי קריטריונים (גיל, עמדה, לאומיות)
+• <strong>לאתר שחקנים דומים</strong> לשחקן שאתה מכיר
+• <strong>לנבא תוצאות</strong> של משחקים
+• <strong>לזהות חריגות</strong> בביצועי שחקנים
+• <strong>לשלוף טבלות</strong> וקבועים חיים
+
+שאל אותי כל שאלה — בעברית או באנגלית! ⚽
+        </div>
+      </div>
+    </div>
+
+    <!-- Typing indicator row -->
+    <div class="msg bot" id="typing-row" style="display:none; padding: 0 0 0 42px;">
+      <div class="typing-indicator visible">
+        <div class="dot"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div class="input-bar">
+      <textarea
+        id="user-input"
+        placeholder="שאל אותי על שחקנים, משחקים, חיזויים…"
+        rows="1"
+      ></textarea>
+      <button id="send-btn" title="שלח" onclick="sendMessage()">➤</button>
+    </div>
+  </div>
+
+  <footer>
+    ScoutAI &mdash; Powered by <a href="#">Google Gemini</a> &amp; LangChain &nbsp;|&nbsp;
+    Data: <a href="#">Kaggle</a> &amp; <a href="#">football-data.org</a>
+  </footer>
+</div>
+
+<script>
+  const chatWindow = document.getElementById('chat-window');
+  const input      = document.getElementById('user-input');
+  const sendBtn    = document.getElementById('send-btn');
+  const typingRow  = document.getElementById('typing-row');
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function scrollBottom() {
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+  }
+
+  /** Render **bold** markdown syntax in bubble text */
+  function renderMarkdown(text) {
+    // הגנה: אם התקבל ערך שאינו מחרוזת (למשל רשימת בלוקים) — נמיר אותו
+    if (typeof text !== 'string') {
+      text = (text == null) ? '' : String(text);
+    }
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n/g, '<br>');
+  }
+
+  function appendMsg(role, text) {
+    const wrap   = document.createElement('div');
+    wrap.className = `msg ${role}`;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = role === 'user' ? '👤' : '⚽';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.innerHTML = renderMarkdown(text);
+
+    wrap.appendChild(avatar);
+    wrap.appendChild(bubble);
+    chatWindow.appendChild(wrap);
+    scrollBottom();
+  }
+
+  function setLoading(on) {
+    sendBtn.disabled     = on;
+    typingRow.style.display = on ? 'flex' : 'none';
+    if (on) scrollBottom();
+  }
+
+  // ── Send ───────────────────────────────────────────────────────────────────
+
+  async function sendMessage() {
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    appendMsg('user', msg);
+    input.value = '';
+    input.style.height = 'auto';
+    setLoading(true);
+
+    try {
+      const res  = await fetch('/chat', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ message: msg }),
+      });
+      const data = await res.json();
+      appendMsg('bot', data.response || data.error || 'אירעה שגיאה לא ידועה.');
+    } catch (err) {
+      appendMsg('bot', 'שגיאת רשת — אנא נסה שנית.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function sendChip(el) {
+    input.value = el.textContent;
+    sendMessage();
+  }
+
+  // ── Auto-resize textarea ───────────────────────────────────────────────────
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+</script>
+</body>
+</html>

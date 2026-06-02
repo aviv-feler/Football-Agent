@@ -1,0 +1,15 @@
+# ── תלויות זמן ריצה (app.py) ──
+flask==3.0.3
+gunicorn==22.0.0
+langchain>=0.3.0
+langchain-google-genai>=2.0.0
+langchain-community>=0.3.0
+scikit-learn==1.5.1
+pandas==2.2.2
+numpy==1.26.4
+requests==2.32.3
+python-dotenv==1.0.1
+
+# הערה: data_prep.py ו-reembed.py דורשים בנוסף sentence-transformers==3.0.1
+# (לחישוב embeddings). זמן הריצה של האפליקציה אינו זקוק לו — הדמיון מבוסס TF-IDF.
+# התקנה לפיתוח: pip install sentence-transformers==3.0.1
