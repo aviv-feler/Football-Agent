@@ -15,8 +15,8 @@ app = Flask(__name__)
 
 # ── טעינת משאבים פעם אחת ב-startup ───────────────────────────────────────────
 print("[app] מאתחל ScoutAI…", flush=True)
-_df, _features, _national_strength, _schedule = load_resources()
-_agent = build_agent(_df, _features, _national_strength, _schedule)
+_engine, _national_strength, _schedule = load_resources()
+_agent = build_agent(_engine, _national_strength, _schedule)
 print("[app] ScoutAI מוכן לקבל שאלות.", flush=True)
 
 

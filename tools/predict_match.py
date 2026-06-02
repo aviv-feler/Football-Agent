@@ -49,14 +49,16 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame):
             f"🏆 תוצאה סבירה: **{winner}** "
             f"(הסתברויות: {team1} {round(p1*100)}% | תיקו {round(p_draw*100)}% | {team2} {round(p2*100)}%)\n\n"
             f"📊 **חוזק נבחרות (נגזר מנתוני השחקנים):**\n"
-            f"• {team1}: ניקוד חוזק {round(s1*100,1)} | דירוג סגל ממוצע {round(row1['squad_rating'],1)} "
-            f"| שווי סגל €{int(row1['squad_value']):,}\n"
-            f"• {team2}: ניקוד חוזק {round(s2*100,1)} | דירוג סגל ממוצע {round(row2['squad_rating'],1)} "
-            f"| שווי סגל €{int(row2['squad_value']):,}\n\n"
+            f"• {team1}: ניקוד חוזק {round(s1*100,1)} | שווי סגל ממוצע €{int(row1['squad_value_mean']):,} "
+            f"| עומק סגל {int(row1['depth'])} שחקנים\n"
+            f"• {team2}: ניקוד חוזק {round(s2*100,1)} | שווי סגל ממוצע €{int(row2['squad_value_mean']):,} "
+            f"| עומק סגל {int(row2['depth'])} שחקנים\n\n"
             f"💡 **ניתוח:** "
             + (f"{team1} עם סגל חזק יותר ולכן הפייבוריטית." if s1 > s2 + 0.05
                else f"{team2} עם סגל חזק יותר ולכן הפייבוריטית." if s2 > s1 + 0.05
                else "הנבחרות שקולות — צפוי משחק צמוד.")
+            + "\n\n🔍 Method: Logistic (softmax) model on squad-strength features "
+              "derived from aggregated player market values."
         )
 
     @tool

@@ -10,13 +10,10 @@ dist/
 build/
 
 # ── נתונים ──
-# מתעלמים מכל קבצי הנתונים הגולמיים הכבדים (מ-Kaggle, מאות MB — מעל מגבלת GitHub).
-# שומרים רק את מה שהאפליקציה צריכה בזמן ריצה:
-#   • players_clean.csv  – הנתונים המעובדים (TF-IDF/clustering נבנים ממנו ב-startup)
-#   • fwc26_match_schedule_agent.csv – לוח המונדיאל
+# מתעלמים מקבצי ה-Kaggle הגולמיים הכבדים (מאות MB), ושומרים רק את מה
+# שהאפליקציה צריכה בזמן ריצה.
 data/*
 !data/players_clean.csv
+!data/player_features.npy
+!data/feature_meta.json
 !data/fwc26_match_schedule_agent.csv
-
-# embeddings אינם בשימוש בזמן ריצה (הוחלפו ב-TF-IDF)
-*.npy

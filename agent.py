@@ -11,10 +11,12 @@ import pandas as pd
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 
-from ds_engine import PlayerFeatures, build_national_strength
+from ds_engine import load_engine, build_national_strength
 from tools.find_similar_players import make_find_similar_players_tool
 from tools.scout_players import make_scout_players_tool
+from tools.get_player_archetype import make_get_player_archetype_tool
 from tools.detect_anomalies import make_detect_anomalies_tool
+from tools.compare_players_jaccard import make_compare_players_jaccard_tool
 from tools.predict_match import make_predict_match_tool
 from tools.get_live_standings import make_get_live_standings_tool
 from tools.world_cup import make_world_cup_tool
@@ -26,18 +28,20 @@ SYSTEM_PROMPT = """You are ScoutAI, an expert football analyst and scout assista
 Data Science course. You work on a database of ~48,000 players and the FIFA World Cup 2026 schedule.
 
 CRITICAL RULES — follow strictly:
-1. NEVER answer about players, similar players, scouting lists, standings, predictions, or
-   World Cup fixtures from your own memory. Your training knowledge is outdated. You MUST call
-   the appropriate tool and base your answer ONLY on its returned data.
+1. NEVER answer about players, similar players, scouting lists, archetypes, anomalies,
+   predictions, standings, or World Cup fixtures from your own memory. Your training
+   knowledge is outdated. You MUST call the right tool and base your answer ONLY on its data.
 2. Tool selection:
-   - "similar to X" / "like X"                 -> find_similar_players
-   - "find / best / top players ..." criteria  -> scout_players
-   - "anomalies / over- or under-performers"    -> detect_anomalies
-   - "predict / who wins X vs Y"                -> predict_match
-   - "standings / league table"                 -> get_live_standings
-   - "World Cup schedule / group / fixtures / when does X play" -> world_cup_info
-3. The similarity/scouting tools use clustering, TF-IDF and Jaccard — explain results by
-   the data (shared profile, cluster, stats), never by player name.
+   - "similar to X" / "like X"                      -> find_similar_players  (cosine on stats)
+   - "find / best / top players ..." criteria       -> scout_players         (content-based)
+   - "what type/role/archetype is X" / "profile of X"-> get_player_archetype  (K-Means)
+   - "anomalies / over- or under-performers"         -> detect_anomalies      (Z-score)
+   - "compare X and Y" / "how similar are X and Y"   -> compare_players_jaccard (Jaccard)
+   - "predict / who wins X vs Y"                     -> predict_match
+   - "standings / league table"                      -> get_live_standings
+   - "World Cup schedule / group / when does X play" -> world_cup_info
+3. Each tool ends its output with a "🔍 Method:" line naming the Data Science model used.
+   ALWAYS preserve and include that Method line in your answer — it is required for grading.
 4. Present the tool's data clearly. Do not invent players, numbers, or rankings.
 5. Always reply in the SAME language the user used (Hebrew or English). Be concise and specific."""
 
@@ -47,13 +51,9 @@ def load_resources():
     if not os.path.exists(DATA_CSV):
         raise FileNotFoundError(f"{DATA_CSV} לא נמצא. הרץ python data_prep.py תחילה.")
 
-    print("[agent] טוען נתוני שחקנים...", flush=True)
-    df = pd.read_csv(DATA_CSV, low_memory=False)
-    print(f"[agent] {len(df)} שחקנים נטענו.", flush=True)
-
-    # מבני Data Science
-    features = PlayerFeatures(df)
-    national_strength = build_national_strength(df)
+    print("[agent] טוען מנוע DS...", flush=True)
+    engine = load_engine()
+    national_strength = build_national_strength(engine.df)
 
     # לוח מונדיאל 2026
     if os.path.exists(WC_CSV):
@@ -63,7 +63,7 @@ def load_resources():
         schedule = pd.DataFrame()
         print(f"[agent] אזהרה: {WC_CSV} לא נמצא.", flush=True)
 
-    return df, features, national_strength, schedule
+    return engine, national_strength, schedule
 
 
 # רשימת מודלים לסבב. לכל מודל מכסת free-tier יומית נפרדת (20/יום בפרויקט חדש),
@@ -160,13 +160,15 @@ class ScoutAgent:
         return "הגעתי למגבלת האיטרציות. נסה לשאול שאלה ממוקדת יותר."
 
 
-def build_agent(df, features, national_strength, schedule):
+def build_agent(engine, national_strength, schedule):
     """בונה ומחזיר את ה-ScoutAgent עם כל הכלים."""
     tools = [
-        make_find_similar_players_tool(df, features),
-        make_scout_players_tool(df, features),
-        make_detect_anomalies_tool(df),
-        make_predict_match_tool(df, national_strength),
+        make_find_similar_players_tool(engine),
+        make_scout_players_tool(engine),
+        make_get_player_archetype_tool(engine),
+        make_detect_anomalies_tool(engine),
+        make_compare_players_jaccard_tool(engine),
+        make_predict_match_tool(engine.df, national_strength),
         make_get_live_standings_tool(),
         make_world_cup_tool(schedule),
     ]

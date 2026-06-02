@@ -1,242 +1,270 @@
 """
 data_prep.py
-הכנת נתונים ל-ScoutAI - מנקה, ממזג ומחשב embeddings לשחקנים.
+הכנת נתונים ל-ScoutAI — בניית מטריצת פיצ'רים מספרית מנורמלת לכל שחקן.
 
-קבצי קלט:
-  data/fifa_players.csv  - נתוני FIFA (גיל, דירוג, עמדה, לאומיות, שווי שוק)
-  data/players.csv       - נתוני Transfermarkt (player_id, שווי שוק, מועדון)
-  data/appearances.csv   - ביצועים לפי משחק (גולים, בישולים, דקות)
+שיטות Data Science:
+  • Feature engineering – סטטיסטיקות per-90 + פרופיל (גיל, גובה, שווי, קאפים)
+  • טיפול בחוסרים – מילוי לפי חציון קבוצת-העמדה (לא 0)
+  • נרמול – StandardScaler (z-score) — קריטי לדמיון תקין
+  • K-Means – אשכולות "ארכיטיפ/תפקיד" עם בחירת k בשיטת המרפק (elbow)
+
+קלט:  data/players.csv, data/appearances.csv  (Kaggle)
+פלט:  data/players_clean.csv, data/player_features.npy, data/feature_meta.json
 """
 
 import os
 import sys
+import json
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
-from sklearn.impute import SimpleImputer
-from sentence_transformers import SentenceTransformer
 
-# ─── קבועים ───────────────────────────────────────────────────────────────────
-FIFA_CSV        = "data/fifa_players.csv"
 PLAYERS_CSV     = "data/players.csv"
 APPEARANCES_CSV = "data/appearances.csv"
+FIFA_CSV        = "data/fifa_players.csv"
 OUTPUT_CSV      = "data/players_clean.csv"
-EMBEDDINGS_FILE = "data/embeddings.npy"
-N_CLUSTERS      = 5
-MODEL_NAME      = "all-MiniLM-L6-v2"
+FEATURES_NPY    = "data/player_features.npy"
+META_JSON       = "data/feature_meta.json"
 
-NUMERIC_FEATURES = [
-    "age", "goals", "assists", "minutes_played",
-    "market_value_in_eur", "overall_rating",
-    "yellow_cards", "red_cards",
+# הפיצ'רים המספריים שמרכיבים את וקטור הביצועים (כולם זמינים כמעט לכל השחקנים)
+FEATURE_COLS = [
+    "goals_per90", "assists_per90", "ga_per90", "cards_per90",
+    "minutes_played_log", "appearances_log", "age", "height_in_cm",
+    "market_value_log", "international_caps_log",
 ]
+# פיצ'רים שעוברים log1p לפני נרמול (מוטים מאוד)
+LOG_COLS = {
+    "minutes_played": "minutes_played_log",
+    "appearances":    "appearances_log",
+    "market_value_in_eur": "market_value_log",
+    "international_caps":   "international_caps_log",
+}
 
 
 def log(msg: str) -> None:
     print(f"[data_prep] {msg}", flush=True)
 
 
-# ─── טעינת FIFA players ───────────────────────────────────────────────────────
+# ─── טעינה ───────────────────────────────────────────────────────────────────
 
-def load_fifa(path: str) -> pd.DataFrame:
-    log(f"טוען fifa_players מ-{path}…")
-    df = pd.read_csv(path, low_memory=False)
-    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+def print_schema(path: str, name: str):
+    df = pd.read_csv(path, nrows=3, low_memory=False)
+    log(f"סכמת {name} ({path}):")
+    log(f"  עמודות: {list(df.columns)}")
 
-    # שמות עמודות ב-fifa_players.csv
-    rename = {}
-    if "full_name"  in df.columns: rename["full_name"]  = "player_name"
-    elif "name"     in df.columns: rename["name"]        = "player_name"
-    if "positions"  in df.columns: rename["positions"]   = "position"
-    if "nationality"in df.columns: pass  # כבר נכון
-    if "value_euro" in df.columns: rename["value_euro"]  = "market_value_in_eur"
-    if "overall_rating" not in df.columns and "overall" in df.columns:
-        rename["overall"] = "overall_rating"
 
-    df = df.rename(columns=rename)
-
-    # חישוב גיל מ-birth_date אם 'age' חסר
-    if "age" not in df.columns and "birth_date" in df.columns:
-        df["age"] = pd.to_datetime(df["birth_date"], errors="coerce").apply(
-            lambda d: (pd.Timestamp.now() - d).days // 365 if pd.notna(d) else np.nan
-        )
-
-    log(f"  {len(df)} שחקנים, עמודות: {list(df.columns[:12])}")
+def load_players(path: str) -> pd.DataFrame:
+    log("טוען players (Transfermarkt)...")
+    cols = ["player_id", "name", "first_name", "last_name", "country_of_citizenship",
+            "sub_position", "position", "foot", "height_in_cm", "market_value_in_eur",
+            "current_club_name", "current_club_domestic_competition_id",
+            "date_of_birth", "international_caps"]
+    df = pd.read_csv(path, usecols=lambda c: c in cols, low_memory=False)
+    df = df.rename(columns={
+        "country_of_citizenship": "nationality",
+        "current_club_name": "club",
+        "current_club_domestic_competition_id": "league",
+    })
+    df["player_name"] = df["name"].fillna(
+        df.get("first_name", "").fillna("") + " " + df.get("last_name", "").fillna("")
+    ).astype(str).str.strip()
+    df["age"] = pd.to_datetime(df["date_of_birth"], errors="coerce").apply(
+        lambda d: (pd.Timestamp.now() - d).days // 365 if pd.notna(d) else np.nan
+    )
+    log(f"  {len(df)} שחקנים")
     return df
 
-
-# ─── טעינת Appearances (ביצועים) ─────────────────────────────────────────────
 
 def load_appearances(path: str) -> pd.DataFrame:
-    log(f"טוען appearances מ-{path} (עשוי לקחת כמה שניות)…")
-    # קוראים רק את העמודות הנחוצות כדי לחסוך זיכרון
-    needed = ["player_id", "player_name", "goals", "assists",
-              "minutes_played", "yellow_cards", "red_cards"]
-    df = pd.read_csv(path, usecols=lambda c: c in needed, low_memory=False)
+    log("טוען appearances ומאגרג לכל שחקן...")
+    need = ["player_id", "goals", "assists", "minutes_played", "yellow_cards", "red_cards"]
+    df = pd.read_csv(path, usecols=lambda c: c in need, low_memory=False)
+    agg = df.groupby("player_id").agg(
+        goals=("goals", "sum"),
+        assists=("assists", "sum"),
+        minutes_played=("minutes_played", "sum"),
+        yellow_cards=("yellow_cards", "sum"),
+        red_cards=("red_cards", "sum"),
+        appearances=("goals", "size"),
+    ).reset_index()
+    log(f"  {len(agg)} שחקנים עם נתוני משחקים")
+    return agg
 
-    # אגרגציה לפי שחקן - סכום עבור כמויות
-    agg = {c: "sum" for c in ["goals","assists","minutes_played","yellow_cards","red_cards"] if c in df.columns}
-    group_col = "player_id" if "player_id" in df.columns else "player_name"
-    df = df.groupby(group_col, as_index=False).agg(agg)
 
-    log(f"  {len(df)} שחקנים ייחודיים לאחר אגרגציה")
+# ─── הנדסת פיצ'רים ───────────────────────────────────────────────────────────
+
+def engineer(df: pd.DataFrame) -> pd.DataFrame:
+    log("מנדס פיצ'רים (per-90 + לוג טרנספורמציות)...")
+
+    for c in ["goals", "assists", "minutes_played", "yellow_cards",
+              "red_cards", "appearances", "international_caps"]:
+        if c not in df.columns:
+            df[c] = 0
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+
+    # סטטיסטיקות per-90 (מנורמלות לזמן משחק). דורש מינימום דקות כדי להימנע מרעש.
+    mins = df["minutes_played"].clip(lower=0)
+    safe = mins.where(mins >= 90, np.nan)  # פחות מ-90 דקות → לא אמין
+    df["goals_per90"]   = (df["goals"]   / (safe / 90)).fillna(0)
+    df["assists_per90"] = (df["assists"] / (safe / 90)).fillna(0)
+    df["ga_per90"]      = df["goals_per90"] + df["assists_per90"]
+    df["cards_per90"]   = ((df["yellow_cards"] + df["red_cards"]) / (safe / 90)).fillna(0)
+
+    # winsorize per-90 כדי שמדגמים זעירים לא ישתלטו (חיתוך באחוזון 99)
+    for c in ["goals_per90", "assists_per90", "ga_per90", "cards_per90"]:
+        cap = df[c].quantile(0.99)
+        df[c] = df[c].clip(upper=cap)
+
+    # לוג טרנספורמציות לפיצ'רים מוטים
+    for raw, logged in LOG_COLS.items():
+        df[logged] = np.log1p(pd.to_numeric(df[raw], errors="coerce").fillna(0).clip(lower=0))
+
+    df["age"] = pd.to_numeric(df["age"], errors="coerce")
+    df["height_in_cm"] = pd.to_numeric(df["height_in_cm"], errors="coerce")
     return df
 
 
-# ─── טעינת Players (Transfermarkt) ───────────────────────────────────────────
-
-def load_players_tm(path: str) -> pd.DataFrame:
-    log(f"טוען players (Transfermarkt) מ-{path}…")
-    needed = ["player_id","first_name","last_name","name",
-              "country_of_citizenship","sub_position","position",
-              "market_value_in_eur","current_club_name","date_of_birth","height_in_cm"]
-    df = pd.read_csv(path, usecols=lambda c: c in needed, low_memory=False)
-
-    rename = {}
-    if "country_of_citizenship" in df.columns:
-        rename["country_of_citizenship"] = "nationality"
-    if "current_club_name" in df.columns:
-        rename["current_club_name"] = "club"
-    df = df.rename(columns=rename)
-
-    # שם מלא
-    if "name" in df.columns:
-        df["player_name"] = df["name"]
-    elif "first_name" in df.columns and "last_name" in df.columns:
-        df["player_name"] = df["first_name"].fillna("") + " " + df["last_name"].fillna("")
-        df["player_name"] = df["player_name"].str.strip()
-
-    # גיל מ-date_of_birth
-    if "date_of_birth" in df.columns:
-        df["age"] = pd.to_datetime(df["date_of_birth"], errors="coerce").apply(
-            lambda d: (pd.Timestamp.now() - d).days // 365 if pd.notna(d) else np.nan
-        )
-
-    log(f"  {len(df)} שחקנים, עמודות: {list(df.columns[:10])}")
-    return df
-
-
-# ─── מיזוג ───────────────────────────────────────────────────────────────────
-
-def merge_all(tm: pd.DataFrame, appearances: pd.DataFrame, fifa: pd.DataFrame) -> pd.DataFrame:
-    log("ממזג את כל מקורות הנתונים…")
-
-    # מיזוג 1: Transfermarkt + Appearances על player_id
-    if "player_id" in tm.columns and "player_id" in appearances.columns:
-        df = tm.merge(appearances, on="player_id", how="left", suffixes=("", "_app"))
-        for c in ["goals","assists","minutes_played","yellow_cards","red_cards"]:
-            c_app = c + "_app"
-            if c_app in df.columns:
-                df[c] = df[c].fillna(df[c_app])
-                df.drop(columns=[c_app], inplace=True)
-    else:
-        df = tm.copy()
-        for c in ["goals","assists","minutes_played","yellow_cards","red_cards"]:
-            if c not in df.columns:
-                df[c] = 0.0
-
-    # מיזוג 2: הוספת overall_rating מ-FIFA על ידי התאמת שם
-    if "overall_rating" in fifa.columns and "player_name" in fifa.columns:
-        fifa_slim = fifa[["player_name","overall_rating","potential"]].copy()
-        # נרמול שמות למיזוג
-        df["_name_key"]       = df["player_name"].str.lower().str.strip()
-        fifa_slim["_name_key"]= fifa_slim["player_name"].str.lower().str.strip()
-        df = df.merge(
-            fifa_slim[["_name_key","overall_rating","potential"]],
-            on="_name_key", how="left"
-        )
-        df.drop(columns=["_name_key"], inplace=True)
-
-    log(f"  {len(df)} שחקנים לאחר מיזוג מלא")
-    return df
-
-
-# ─── הנדסת תכונות ─────────────────────────────────────────────────────────────
-
-def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
-    log("מנדס תכונות ומנרמל…")
-
-    for col in NUMERIC_FEATURES:
+def fill_by_position_median(df: pd.DataFrame) -> pd.DataFrame:
+    """מילוי חוסרים לפי חציון קבוצת-העמדה (ולא 0)."""
+    log("ממלא חוסרים לפי חציון קבוצת-העמדה...")
+    for col in FEATURE_COLS:
         if col not in df.columns:
-            df[col] = 0.0
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    imputer = SimpleImputer(strategy="median")
-    df[NUMERIC_FEATURES] = imputer.fit_transform(df[NUMERIC_FEATURES])
-
-    scaler = StandardScaler()
-    scaled = scaler.fit_transform(df[NUMERIC_FEATURES])
-    scaled_df = pd.DataFrame(
-        scaled,
-        columns=[f"{c}_scaled" for c in NUMERIC_FEATURES],
-        index=df.index,
-    )
-    df = pd.concat([df, scaled_df], axis=1)
+            df[col] = np.nan
+        med_by_pos = df.groupby("position")[col].transform("median")
+        df[col] = df[col].fillna(med_by_pos)
+        df[col] = df[col].fillna(df[col].median())  # גיבוי גלובלי
     return df
 
 
-# ─── K-Means clustering ───────────────────────────────────────────────────────
+# ─── אשכולות + elbow ─────────────────────────────────────────────────────────
 
-def cluster_players(df: pd.DataFrame) -> pd.DataFrame:
-    log(f"מריץ K-Means עם k={N_CLUSTERS}…")
-    scaled_cols = [f"{c}_scaled" for c in NUMERIC_FEATURES]
-    kmeans = KMeans(n_clusters=N_CLUSTERS, random_state=42, n_init=10)
-    df["cluster"] = kmeans.fit_predict(df[scaled_cols])
-    log(f"  התפלגות: {df['cluster'].value_counts().sort_index().to_dict()}")
-    return df
+def choose_k_elbow(X: np.ndarray, k_range=range(2, 11)) -> int:
+    """בוחר k בשיטת המרפק: הנקודה עם המרחק המקסימלי מהקו ישר inertia(k)."""
+    log("מריץ שיטת המרפק (elbow) לבחירת k...")
+    inertias = []
+    for k in k_range:
+        km = KMeans(n_clusters=k, random_state=42, n_init=10)
+        km.fit(X)
+        inertias.append(km.inertia_)
+        log(f"  k={k}: inertia={km.inertia_:,.0f}")
+
+    ks = np.array(list(k_range))
+    iner = np.array(inertias)
+    # מרחק כל נקודה מהקו המחבר את הקצוות → המרפק הוא המרחק המקסימלי
+    p1, p2 = np.array([ks[0], iner[0]]), np.array([ks[-1], iner[-1]])
+    line = p2 - p1
+    line = line / np.linalg.norm(line)
+    dists = []
+    for i in range(len(ks)):
+        p = np.array([ks[i], iner[i]]) - p1
+        proj = p - np.dot(p, line) * line
+        dists.append(np.linalg.norm(proj))
+    best_k = int(ks[int(np.argmax(dists))])
+    log(f"  ✓ נבחר k={best_k} (מרפק)")
+    return best_k
 
 
-# ─── פרופיל טקסט לכל שחקן ───────────────────────────────────────────────────
-# הטקסט מתאר סגנון ורמה (ללא שם) כדי שה-embedding יתפוס דמיון בסגנון משחק
-from profile_utils import build_profile_text  # noqa: E402
-
-
-# ─── Sentence Embeddings ──────────────────────────────────────────────────────
-
-def compute_embeddings(df: pd.DataFrame) -> np.ndarray:
-    log(f"מחשב sentence embeddings עם {MODEL_NAME}…")
-    model = SentenceTransformer(MODEL_NAME)
-    texts = df["profile_text"].tolist()
-    embeddings = model.encode(texts, show_progress_bar=True, batch_size=64)
-    log(f"  צורת embeddings: {embeddings.shape}")
-    return embeddings
+def build_archetypes(centroids: np.ndarray, feature_names: list[str]) -> dict:
+    """
+    נותן שם ארכיטיפ ייחודי לכל אשכול לפי הפיצ'ר המבדיל ביותר במרכז (ב-z-score).
+    מבטיח שמות מובחנים בין האשכולות.
+    """
+    idx = {n: i for i, n in enumerate(feature_names)}
+    # פיצ'ר → (שם כשהוא גבוה, שם כשהוא נמוך)
+    desc = {
+        "goals_per90":       ("Goalscorer / Poacher", None),
+        "assists_per90":     ("Creator / Playmaker", None),
+        "market_value_log":  ("Elite high-value", None),
+        "minutes_played_log":("High-minutes regular", "Fringe / limited minutes"),
+        "international_caps_log": ("Established international", None),
+        "age":               ("Veteran", "Young prospect"),
+        "cards_per90":       ("Aggressive / physical", None),
+        "height_in_cm":      ("Tall / aerial", None),
+    }
+    labels, used = {}, set()
+    for ci, c in enumerate(centroids):
+        # מדרגים פיצ'רים לפי |z| יורד ובוחרים את הראשון שנותן תווית חדשה
+        ranked = sorted(desc.keys(), key=lambda f: abs(c[idx[f]]), reverse=True)
+        chosen = None
+        for f in ranked:
+            hi, lo = desc[f]
+            name = hi if c[idx[f]] >= 0 else lo
+            if name and name not in used:
+                chosen = name
+                break
+        if chosen is None:
+            chosen = f"Archetype {ci}"
+        used.add(chosen)
+        labels[int(ci)] = chosen
+    return labels
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-def main() -> None:
+def main():
     os.makedirs("data", exist_ok=True)
+    for p in (PLAYERS_CSV, APPEARANCES_CSV):
+        if not os.path.exists(p):
+            log(f"ERROR: {p} לא נמצא.")
+            sys.exit(1)
 
-    # ── טעינה ──
-    missing = [f for f in [FIFA_CSV, PLAYERS_CSV, APPEARANCES_CSV] if not os.path.exists(f)]
-    if missing:
-        log(f"ERROR: קבצים חסרים: {missing}")
-        sys.exit(1)
+    # אימות סכמה — מדפיסים את העמודות האמיתיות לפני בנייה
+    print_schema(PLAYERS_CSV, "players")
+    print_schema(APPEARANCES_CSV, "appearances")
+    if os.path.exists(FIFA_CSV):
+        print_schema(FIFA_CSV, "fifa_players")
 
-    tm          = load_players_tm(PLAYERS_CSV)
-    appearances = load_appearances(APPEARANCES_CSV)
-    fifa        = load_fifa(FIFA_CSV)
+    players = load_players(PLAYERS_CSV)
+    apps    = load_appearances(APPEARANCES_CSV)
 
-    # ── מיזוג ──
-    df = merge_all(tm, appearances, fifa)
+    df = players.merge(apps, on="player_id", how="left")
+    log(f"מוזג: {len(df)} שחקנים")
 
-    # ── עיבוד ──
-    df = engineer_features(df)
-    df = cluster_players(df)
+    df = engineer(df)
+    df = fill_by_position_median(df)
 
-    # ── פרופיל טקסט ──
-    log("בונה פרופילי טקסט…")
-    df["profile_text"] = df.apply(build_profile_text, axis=1)
+    # ── נרמול (z-score) ──
+    log("מנרמל את כל הפיצ'רים עם StandardScaler (z-score)...")
+    scaler = StandardScaler()
+    X = scaler.fit_transform(df[FEATURE_COLS].values)
+
+    # ── K-Means עם elbow ──
+    k = choose_k_elbow(X)
+    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+    df["cluster"] = km.fit_predict(X)
+    log(f"התפלגות אשכולות: {df['cluster'].value_counts().sort_index().to_dict()}")
+
+    # ── תיוג ארכיטיפים (ייחודי לכל אשכול) ──
+    archetypes = build_archetypes(km.cluster_centers_, FEATURE_COLS)
+    df["archetype"] = df["cluster"].map(archetypes)
+    log(f"ארכיטיפים: {archetypes}")
+
+    # ── עמודות עזר ל-Jaccard / תצוגה ──
+    df["age_bucket"] = pd.cut(df["age"], bins=[0, 21, 25, 29, 33, 99],
+                              labels=["U21", "21-25", "26-29", "30-33", "33+"]).astype(str)
+    df["value_tier"] = pd.cut(df["market_value_in_eur"],
+                              bins=[-1, 1e6, 5e6, 20e6, 50e6, 1e12],
+                              labels=["low", "modest", "mid", "high", "elite"]).astype(str)
 
     # ── שמירה ──
     df.to_csv(OUTPUT_CSV, index=False)
-    log(f"שמר {len(df)} שחקנים ל-{OUTPUT_CSV}")
+    log(f"שמר {len(df)} שחקנים → {OUTPUT_CSV}")
 
-    embeddings = compute_embeddings(df)
-    np.save(EMBEDDINGS_FILE, embeddings)
-    log(f"שמר embeddings ל-{EMBEDDINGS_FILE}")
+    np.save(FEATURES_NPY, X)
+    log(f"שמר מטריצת פיצ'רים מנורמלת {X.shape} → {FEATURES_NPY}")
 
+    meta = {
+        "feature_names": FEATURE_COLS,
+        "k": k,
+        "scaler_mean":  scaler.mean_.tolist(),
+        "scaler_scale": scaler.scale_.tolist(),
+        "centroids":    km.cluster_centers_.tolist(),
+        "archetypes":   archetypes,
+    }
+    with open(META_JSON, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    log(f"שמר metadata → {META_JSON}")
     log("הכנת נתונים הושלמה בהצלחה!")
 
 
