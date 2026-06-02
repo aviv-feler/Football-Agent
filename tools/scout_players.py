@@ -30,22 +30,29 @@ _CONTINENT_NATIONS = {
 }
 
 
-def make_scout_players_tool(engine):
+def make_scout_players_tool(engine, wc_nations: set | None = None):
     df = engine.df
     fidx = {n: i for i, n in enumerate(engine.feature_names)}
+    wc_nations = wc_nations or set()
 
     @tool
     def scout_players(criteria: str) -> str:
         """
         Find top players matching natural-language scouting criteria. Parses the criteria
-        into filters (position, age, region) then ranks the filtered set by COSINE
-        SIMILARITY to an ideal target profile (content-based recommendation).
-        Examples: 'fast striker under 23 from South America', 'best creative midfielders'.
+        into filters (position, age, region, World Cup participation) then ranks the
+        filtered set by COSINE SIMILARITY to an ideal target profile (content-based).
+        Examples: 'fast striker under 23 from South America', 'best strikers in the World Cup'.
         Input is the criteria as plain text.
         """
         crit = criteria.lower()
         cand = df
         applied, emphasis = [], {}
+
+        # ── פילטר מונדיאל: רק שחקנים מנבחרות שמשתתפות במונדיאל 2026 ──
+        if wc_nations and any(w in crit for w in ["world cup", "mundial", "מונדיאל", "wc2026", "fwc"]):
+            m = cand["nationality"].isin(wc_nations)
+            if m.any():
+                cand = cand[m]; applied.append("World Cup 2026 teams")
 
         # ── פילטר עמדה ──
         for pos_value, kws in _POSITION_KEYWORDS.items():

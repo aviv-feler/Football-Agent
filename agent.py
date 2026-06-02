@@ -11,7 +11,7 @@ import pandas as pd
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 
-from ds_engine import load_engine, build_national_strength
+from ds_engine import load_engine, build_national_strength, normalize_nation
 from tools.find_similar_players import make_find_similar_players_tool
 from tools.scout_players import make_scout_players_tool
 from tools.get_player_archetype import make_get_player_archetype_tool
@@ -182,9 +182,20 @@ class ScoutAgent:
 
 def build_agent(engine, national_strength, schedule):
     """בונה ומחזיר את ה-ScoutAgent עם כל הכלים."""
+    # קבוצת הלאומים של 48 נבחרות המונדיאל (ממופות לערכי nationality בנתונים)
+    wc_nations = set()
+    if not schedule.empty:
+        known = set(engine.df["nationality"].dropna().unique())
+        names = set(schedule["team1_name"].dropna()) | set(schedule["team2_name"].dropna())
+        for n in names:
+            mapped = normalize_nation(n, known) if isinstance(n, str) else None
+            if mapped:
+                wc_nations.add(mapped)
+        print(f"[agent] מונדיאל: מופו {len(wc_nations)} נבחרות ללאומים בנתונים.", flush=True)
+
     tools = [
         make_find_similar_players_tool(engine),
-        make_scout_players_tool(engine),
+        make_scout_players_tool(engine, wc_nations),
         make_get_player_archetype_tool(engine),
         make_detect_anomalies_tool(engine),
         make_compare_players_jaccard_tool(engine),
