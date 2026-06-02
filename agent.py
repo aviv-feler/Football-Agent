@@ -125,15 +125,35 @@ class ScoutAgent:
                 raise
         raise last_err
 
+    @staticmethod
+    def _detect_language(text: str) -> str:
+        """מזהה אם המשתמש כתב בעברית (תווי עברית) או באנגלית."""
+        for ch in text:
+            if "֐" <= ch <= "׿":
+                return "Hebrew"
+        return "English"
+
     def invoke(self, user_input: str) -> str:
-        messages = [self.system_msg, HumanMessage(content=user_input)]
+        lang = self._detect_language(user_input)
+        # הנחיית שפה חזקה לכל פנייה — כלי הנתונים מחזירים תוויות בעברית,
+        # ולכן צריך לכפות מפורשות לענות בשפת המשתמש.
+        lang_directive = SystemMessage(content=(
+            f"LANGUAGE RULE: The user's message is written in {lang}. "
+            f"Write your ENTIRE final answer in {lang}. If a tool returns labels in a "
+            f"different language, TRANSLATE them to {lang}. Keep player names, club names, "
+            f"and the '🔍 Method:' line unchanged."
+        ))
+        messages = [self.system_msg, lang_directive, HumanMessage(content=user_input)]
         for _ in range(self.MAX_ITERATIONS):
             try:
                 response = self._call_llm(messages)
             except Exception as e:
                 if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                    return ("מיצינו את מכסת ה-API החינמית של Gemini להיום (20 בקשות ליום לכל מודל "
-                            "בפרויקט חדש). המכסה מתאפסת מדי יום. נסה שוב מאוחר יותר.")
+                    if lang == "Hebrew":
+                        return ("מיצינו את מכסת ה-API החינמית של Gemini להיום. "
+                                "המכסה מתאפסת מדי יום — נסה שוב מאוחר יותר.")
+                    return ("We've hit today's free Gemini API quota. "
+                            "It resets daily — please try again later.")
                 raise
             messages.append(response)
 
@@ -181,6 +201,7 @@ def build_agent(engine, national_strength, schedule):
             model=model_name,
             google_api_key=api_key,
             temperature=0.3,
+            max_retries=0,   # כשל מיידי על 429 → מעבר מהיר למודל הבא (מהירות)
         )
         llms_with_tools.append(llm.bind_tools(tools))
 
