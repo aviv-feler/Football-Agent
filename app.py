@@ -45,6 +45,13 @@ def chat():
     return jsonify({"response": response})
 
 
+@app.route("/reset", methods=["POST"])
+def reset():
+    """ניקוי היסטוריית השיחה — שיחה חדשה."""
+    _agent.reset()
+    return jsonify({"ok": True})
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)

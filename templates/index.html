@@ -240,7 +240,14 @@
         <span class="logo-sub">Football Intelligence Platform</span>
       </div>
     </div>
-    <span class="header-badge">AI Powered</span>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <button id="new-chat-btn" onclick="newChat()" title="שיחה חדשה"
+        style="background:var(--bg3); border:1px solid var(--border); color:var(--text-muted);
+               padding:6px 14px; border-radius:20px; font-size:.82rem; cursor:pointer;">
+        🔄 שיחה חדשה
+      </button>
+      <span class="header-badge">AI Powered</span>
+    </div>
   </header>
 
   <!-- Hero -->
@@ -392,6 +399,15 @@
   function sendChip(el) {
     input.value = el.textContent;
     sendMessage();
+  }
+
+  // ── New chat: clear server context + reset the window ──
+  async function newChat() {
+    try { await fetch('/reset', { method: 'POST' }); } catch (e) {}
+    // משאירים רק את הודעת הפתיחה (הראשונה)
+    const msgs = chatWindow.querySelectorAll('.msg');
+    msgs.forEach((m, i) => { if (i > 0) m.remove(); });
+    input.value = '';
   }
 
   // ── Auto-resize textarea ───────────────────────────────────────────────────

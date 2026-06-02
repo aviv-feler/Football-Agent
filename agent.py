@@ -82,12 +82,28 @@ class ScoutAgent:
 
     MAX_ITERATIONS = 5
 
+    MAX_HISTORY_TURNS = 6   # כמה תורות שיחה אחרונות לזכור (להקשר)
+
     def __init__(self, llms_with_tools: list, tools: list):
         # רשימת מודלים (כל אחד כבר עם bind_tools) — מסודרים לפי עדיפות
         self.llms = llms_with_tools
         self.model_idx = 0
         self.tool_map = {t.name: t for t in tools}
         self.system_msg = SystemMessage(content=SYSTEM_PROMPT)
+        # היסטוריית שיחה (זוגות human/ai) לשמירת הקשר בין פניות
+        self.history: list = []
+
+    def _remember(self, user_input: str, answer: str):
+        """שומר את התור הנוכחי בהיסטוריה וגוזם לאורך המקסימלי."""
+        self.history.append(HumanMessage(content=user_input))
+        self.history.append(AIMessage(content=answer))
+        max_msgs = self.MAX_HISTORY_TURNS * 2
+        if len(self.history) > max_msgs:
+            self.history = self.history[-max_msgs:]
+
+    def reset(self):
+        """ניקוי היסטוריית השיחה (שיחה חדשה)."""
+        self.history = []
 
     @staticmethod
     def _extract_text(content) -> str:
@@ -143,7 +159,9 @@ class ScoutAgent:
             f"different language, TRANSLATE them to {lang}. Keep player names, club names, "
             f"and the '🔍 Method:' line unchanged."
         ))
-        messages = [self.system_msg, lang_directive, HumanMessage(content=user_input)]
+        # ההיסטוריה מצורפת לפני התור הנוכחי כדי לשמר הקשר בין פניות
+        messages = [self.system_msg, *self.history, lang_directive,
+                    HumanMessage(content=user_input)]
         for _ in range(self.MAX_ITERATIONS):
             try:
                 response = self._call_llm(messages)
@@ -158,7 +176,9 @@ class ScoutAgent:
             messages.append(response)
 
             if not getattr(response, "tool_calls", None):
-                return self._extract_text(response.content) or "אין תגובה."
+                answer = self._extract_text(response.content) or "אין תגובה."
+                self._remember(user_input, answer)
+                return answer
 
             for tc in response.tool_calls:
                 name, args = tc["name"], tc["args"]
