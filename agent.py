@@ -5,12 +5,14 @@ ScoutAI agent - בנוי עם tool calling ישיר (LangChain 1.x / langchain-g
 """
 
 import os
+import re
 import time
 import numpy as np
 import pandas as pd
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 
+from data_manager import PLAYER_PROFILES_FILE, load_player_profiles, write_source_map
 from ds_engine import load_engine, build_national_strength, normalize_nation
 from tools.find_similar_players import make_find_similar_players_tool
 from tools.scout_players import make_scout_players_tool
@@ -20,6 +22,7 @@ from tools.compare_players_jaccard import make_compare_players_jaccard_tool
 from tools.predict_match import make_predict_match_tool
 from tools.get_live_standings import make_get_live_standings_tool
 from tools.world_cup import make_world_cup_tool
+from football_qa import FootballQAPipeline
 
 DATA_CSV     = "data/players_clean.csv"
 WC_CSV       = "data/fwc26_match_schedule_agent.csv"
@@ -53,7 +56,10 @@ def load_resources():
 
     print("[agent] טוען מנוע DS...", flush=True)
     engine = load_engine()
-    national_strength = build_national_strength(engine.df)
+    write_source_map()
+    current_profiles = load_player_profiles()
+    national_strength = build_national_strength(current_profiles)
+    print(f"[agent] current player source: {PLAYER_PROFILES_FILE}", flush=True)
 
     # לוח מונדיאל 2026
     if os.path.exists(WC_CSV):
@@ -84,12 +90,13 @@ class ScoutAgent:
 
     MAX_HISTORY_TURNS = 6   # כמה תורות שיחה אחרונות לזכור (להקשר)
 
-    def __init__(self, llms_with_tools: list, tools: list):
+    def __init__(self, llms_with_tools: list, tools: list, qa_pipeline: FootballQAPipeline | None = None):
         # רשימת מודלים (כל אחד כבר עם bind_tools) — מסודרים לפי עדיפות
         self.llms = llms_with_tools
         self.model_idx = 0
         self.tool_map = {t.name: t for t in tools}
         self.system_msg = SystemMessage(content=SYSTEM_PROMPT)
+        self.qa_pipeline = qa_pipeline
         # היסטוריית שיחה (זוגות human/ai) לשמירת הקשר בין פניות
         self.history: list = []
 
@@ -104,6 +111,56 @@ class ScoutAgent:
     def reset(self):
         """ניקוי היסטוריית השיחה (שיחה חדשה)."""
         self.history = []
+        if self.qa_pipeline is not None:
+            self.qa_pipeline.reset_context()
+
+    @staticmethod
+    def _looks_like_scout_query(text: str) -> bool:
+        q = text.lower()
+        scout_words = [
+            "best", "top", "find", "scout", "player", "players", "striker",
+            "forward", "winger", "midfielder", "defender", "goalkeeper",
+            "הכי", "טוב", "מוביל", "מצא", "חפש", "שחקן", "שחקנים",
+            "חלוץ", "התקפה", "קשר", "בלם", "מגן", "שוער",
+        ]
+        excluded_words = [
+            "similar", "like", "דומה", "דומים", "compare", "השווה",
+            "predict", "נבא", "תחזה", "טבלה", "standings", "מונדיאל",
+            "world cup", "archetype", "ארכיטיפ", "פרופיל", "חריג",
+        ]
+        return any(w in q for w in scout_words) and not any(w in q for w in excluded_words)
+
+    @staticmethod
+    def _extract_similar_player(text: str) -> str:
+        q = text.strip()
+        patterns = [
+            r"similar to\s+(.+)$",
+            r"like\s+(.+)$",
+            r"דומים\s+ל(.+)$",
+            r"דומה\s+ל(.+)$",
+            r"כמו\s+(.+)$",
+        ]
+        for pat in patterns:
+            m = re.search(pat, q, flags=re.IGNORECASE)
+            if m:
+                return m.group(1).strip(" ?.,:;\"'")
+        return q
+
+    def _direct_tool_answer(self, user_input: str) -> str | None:
+        """Rule-based routing for frequent data questions the LLM sometimes leaves unanswered."""
+        q = user_input.lower()
+
+        if any(w in q for w in ["similar", "like", "דומה", "דומים", "כמו"]):
+            tool = self.tool_map.get("find_similar_players")
+            if tool:
+                return str(tool.invoke(self._extract_similar_player(user_input)))
+
+        if self._looks_like_scout_query(user_input):
+            tool = self.tool_map.get("scout_players")
+            if tool:
+                return str(tool.invoke(user_input))
+
+        return None
 
     @staticmethod
     def _extract_text(content) -> str:
@@ -151,6 +208,27 @@ class ScoutAgent:
 
     def invoke(self, user_input: str) -> str:
         lang = self._detect_language(user_input)
+        if self.qa_pipeline is not None:
+            try:
+                qa = self.qa_pipeline.answerFootballQuestion(user_input, use_gemini=True)
+                if qa.intent.intent != "unknown_question" or qa.intent.combined_score >= 0.16:
+                    answer = qa.answer
+                    self._remember(user_input, answer)
+                    print(
+                        f"[agent] smart_qa intent={qa.intent.intent} "
+                        f"score={qa.intent.combined_score:.3f} "
+                        f"entities={[e.name for e in qa.entities]}",
+                        flush=True,
+                    )
+                    return answer
+            except Exception as e:
+                print(f"[agent] smart_qa fallback: {e}", flush=True)
+
+        direct = self._direct_tool_answer(user_input)
+        if direct:
+            self._remember(user_input, direct)
+            return direct
+
         # הנחיית שפה חזקה לכל פנייה — כלי הנתונים מחזירים תוויות בעברית,
         # ולכן צריך לכפות מפורשות לענות בשפת המשתמש.
         lang_directive = SystemMessage(content=(
@@ -177,6 +255,10 @@ class ScoutAgent:
 
             if not getattr(response, "tool_calls", None):
                 answer = self._extract_text(response.content) or "אין תגובה."
+                if answer.strip() in {"אין תגובה.", "אין תגובה", "No response.", "No response"}:
+                    fallback = self._direct_tool_answer(user_input)
+                    if fallback:
+                        answer = fallback
                 self._remember(user_input, answer)
                 return answer
 
@@ -226,6 +308,7 @@ def build_agent(engine, national_strength, schedule):
 
     # בונים מופע לכל מודל בשרשרת (כל אחד עם bind_tools) לצורך סבב על מיצוי מכסה
     api_key = os.getenv("GEMINI_API_KEY")
+    plain_llms = []
     llms_with_tools = []
     for model_name in MODEL_CHAIN:
         llm = ChatGoogleGenerativeAI(
@@ -234,8 +317,11 @@ def build_agent(engine, national_strength, schedule):
             temperature=0.3,
             max_retries=0,   # כשל מיידי על 429 → מעבר מהיר למודל הבא (מהירות)
         )
+        plain_llms.append(llm)
         llms_with_tools.append(llm.bind_tools(tools))
 
-    agent = ScoutAgent(llms_with_tools=llms_with_tools, tools=tools)
+    qa_pipeline = FootballQAPipeline(engine, national_strength, schedule, plain_llms)
+
+    agent = ScoutAgent(llms_with_tools=llms_with_tools, tools=tools, qa_pipeline=qa_pipeline)
     print(f"[agent] Agent מוכן ({len(MODEL_CHAIN)} מודלים בסבב).", flush=True)
     return agent

@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 *.pyo
+server.*.log
 .venv/
 venv/
 *.egg-info/
@@ -14,6 +15,8 @@ build/
 # שהאפליקציה צריכה בזמן ריצה.
 data/*
 !data/players_clean.csv
+!data/player_profiles.csv
 !data/player_features.npy
 !data/feature_meta.json
 !data/fwc26_match_schedule_agent.csv
+!data/data_source_map.json

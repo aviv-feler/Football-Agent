@@ -1,0 +1,106 @@
+{
+  "data_version": "2026-06-03-source-priority-v2",
+  "generated_at": "2026-06-03T20:48:07.592559+00:00",
+  "source_priority": {
+    "current_player_rankings": [
+      {
+        "priority": 1,
+        "file": "data/Football_clubs_players_full.xlsx",
+        "sheet": "players_statistics_final",
+        "reason": "Current/season-style player statistics for ranking questions."
+      },
+      {
+        "priority": 2,
+        "file": "Football-Data API",
+        "reason": "Fresh scorers/standings when relevant and available."
+      },
+      {
+        "priority": 3,
+        "file": "data/player_profiles.csv",
+        "reason": "Fallback only; contains aggregated profile context."
+      }
+    ],
+    "current_player_identity": [
+      {
+        "priority": 1,
+        "file": "data/players.csv",
+        "reason": "Raw Transfermarkt current player club/league fields."
+      },
+      {
+        "priority": 2,
+        "file": "data/player_profiles.csv",
+        "reason": "Generated from players.csv with metadata."
+      },
+      {
+        "priority": 3,
+        "file": "data/players_clean.csv",
+        "reason": "Generated feature file, used only as fallback/features."
+      }
+    ],
+    "player_similarity": [
+      {
+        "priority": 1,
+        "file": "data/player_profiles.csv",
+        "reason": "Rebuilt profiles with position-aware scores and clusters."
+      },
+      {
+        "priority": 2,
+        "file": "data/player_features.npy",
+        "reason": "Legacy numeric vectors; used only while row-aligned."
+      },
+      {
+        "priority": 3,
+        "file": "data/feature_meta.json",
+        "reason": "K-Means metadata."
+      }
+    ],
+    "player_stats": [
+      {
+        "priority": 1,
+        "file": "data/appearances.csv",
+        "reason": "Match appearance aggregates."
+      },
+      {
+        "priority": 2,
+        "file": "data/player_profiles.csv",
+        "reason": "Pre-aggregated generated profile."
+      }
+    ],
+    "teams_clubs": [
+      {
+        "priority": 1,
+        "file": "data/clubs.csv",
+        "reason": "Club metadata and domestic competition."
+      },
+      {
+        "priority": 2,
+        "file": "data/player_profiles.csv",
+        "reason": "Player-derived club squads."
+      }
+    ],
+    "matches_results": [
+      {
+        "priority": 1,
+        "file": "Football-Data API",
+        "reason": "Fresh standings/results when key is available."
+      },
+      {
+        "priority": 2,
+        "file": "data/games.csv",
+        "reason": "Local historical match data fallback."
+      },
+      {
+        "priority": 3,
+        "file": "data/club_games.csv",
+        "reason": "Club-side match aggregates fallback."
+      }
+    ],
+    "world_cup_schedule": [
+      {
+        "priority": 1,
+        "file": "data/fwc26_match_schedule_agent.csv",
+        "reason": "Local World Cup 2026 schedule."
+      }
+    ]
+  }
+}
