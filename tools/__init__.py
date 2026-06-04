@@ -1,1 +1,1 @@
-# כלי ה-agent של ScoutAI
+# ScoutAI agent tools.

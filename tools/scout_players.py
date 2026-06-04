@@ -1,11 +1,7 @@
 """
-tools/scout_players.py
-TOOL 2 — סקאוטינג לפי קריטריונים בשפה טבעית (Content-Based Recommendation).
-הסוכן (Gemini) הוא שכבת ה-NLP שמעבירה את הקריטריון; כאן מפרקים לפילטרים,
-בונים "וקטור-מטרה" אידיאלי, ומדרגים את המועמדים ב-Cosine similarity.
-
-(חלופה אקדמית: Item-Item Collaborative Filtering — לא מומש כי אין נתוני
-דירוג משתמשים; Content-Based מתאים יותר לפרופיל פיצ'רים.)
+TOOL 2 - Scout players from natural-language criteria.
+Method: Content-based recommendation. The LLM is the NLP layer; this tool applies
+filters, builds an ideal target vector, and ranks candidates with cosine similarity.
 """
 
 import re
@@ -108,13 +104,13 @@ def make_scout_players_tool(engine, wc_nations: set | None = None):
         cand = df
         applied, emphasis = [], {}
 
-        # ── פילטר מונדיאל: רק שחקנים מנבחרות שמשתתפות במונדיאל 2026 ──
+        # World Cup filter: only players from qualified/known World Cup nations.
         if wc_nations and any(w in crit for w in ["world cup", "mundial", "מונדיאל", "wc2026", "fwc"]):
             m = cand["nationality"].isin(wc_nations)
             if m.any():
                 cand = cand[m]; applied.append("World Cup 2026 teams")
 
-        # ── פילטר עמדה ──
+        # Position filter.
         for pos_value, kws in _POSITION_KEYWORDS.items():
             if any(k in crit for k in kws):
                 m = cand["position"] == pos_value
@@ -122,7 +118,7 @@ def make_scout_players_tool(engine, wc_nations: set | None = None):
                     cand = cand[m]; applied.append(f"position={pos_value}")
                 break
 
-        # ── פילטר גיל ──
+        # Age filter.
         nums = re.findall(r"\b(1[5-9]|[2-3]\d|4[0-5])\b", crit)
         if re.search(r"under|below|younger|מתחת|פחות", crit) and nums:
             lim = int(nums[0]); cand = cand[cand["age"] < lim]; applied.append(f"age<{lim}")
@@ -137,7 +133,7 @@ def make_scout_players_tool(engine, wc_nations: set | None = None):
             cand = cand[cand["age"] >= 30]; applied.append("age>=30")
             emphasis["age"] = 1.5
 
-        # ── פילטר אזור/לאום ──
+        # Region/nationality filter.
         for cont, nations in _CONTINENT_NATIONS.items():
             if cont in crit:
                 m = cand["nationality"].isin(nations)
@@ -157,7 +153,7 @@ def make_scout_players_tool(engine, wc_nations: set | None = None):
                             cand = cand[m]; applied.append(f"nationality={nat}")
                         break
 
-        # ── פילטר ליגה ──
+        # League filter.
         for alias, league_code in _LEAGUE_ALIASES.items():
             if alias in crit:
                 m = cand["league"] == league_code
@@ -165,7 +161,7 @@ def make_scout_players_tool(engine, wc_nations: set | None = None):
                     cand = cand[m]; applied.append(f"league={league_code}")
                 break
 
-        # ── דגשי פרופיל (לבניית וקטור-המטרה) ──
+        # Profile emphasis for the ideal target vector.
         if any(w in crit for w in ["goalscorer", "scorer", "goals", "מבקיע", "כובש", "striker", "forward", "חלוץ", "התקפה", "התקפי"]):
             emphasis["goals_per90"] = 1.8; emphasis["ga_per90"] = 1.2
         if any(w in crit for w in ["playmaker", "assist", "creative", "מבשל", "יצירתי"]):
@@ -175,19 +171,18 @@ def make_scout_players_tool(engine, wc_nations: set | None = None):
             emphasis.setdefault("ga_per90", 1.0)
 
         if cand.empty:
-            return f"לא נמצאו שחקנים שתואמים את '{criteria}'. נסה לרכך את הקריטריונים."
+            return f"No players matched '{criteria}'. Try relaxing the criteria."
 
-        # ── וקטור-מטרה אידיאלי (z-space): 0=ממוצע, דגשים חיוביים/שליליים ──
+        # Ideal target vector in z-space: 0=average, +/- values express emphasis.
         target = np.zeros(len(engine.feature_names))
-        if not emphasis:  # ברירת מחדל: שחקן איכותי ופעיל
+        if not emphasis:
             emphasis = {"market_value_log": 1.2, "minutes_played_log": 1.0, "ga_per90": 0.8}
         for feat, val in emphasis.items():
             if feat in fidx:
                 target[fidx[feat]] = val
 
         cand_ilocs = np.array([df.index.get_loc(i) for i in cand.index])
-        # דמיון סגנון (cosine, מתעלם מעוצמה) משולב עם איכות (שווי שוק) כדי
-        # שלא נחזיר שחקנים אלמונים שרק "מצביעים לכיוון" הנכון.
+        # Combine profile similarity with market-value quality.
         sims = engine.cosine_to_vector(target, cand_ilocs)
         sims_n = (sims - sims.min()) / (sims.max() - sims.min() + 1e-9)
         mv = cand["market_value_in_eur"].fillna(0).clip(lower=0).values
@@ -196,18 +191,18 @@ def make_scout_players_tool(engine, wc_nations: set | None = None):
         order = np.argsort(score)[::-1][:5]
         top_ilocs = cand_ilocs[order]
 
-        header = f"**5 שחקנים מובילים ל-'{criteria}'**"
+        header = f"**Top 5 players for '{criteria}'**"
         if applied:
-            header += f"  _(פילטרים: {', '.join(applied)})_"
+            header += f"  _(filters: {', '.join(applied)})_"
         lines = [header + ":\n"]
         for rank, il in enumerate(top_ilocs, 1):
             r = df.iloc[il]
             lines.append(
                 f"{rank}. **{r['player_name']}** "
                 f"({r.get('sub_position', r.get('position','?'))} | {r.get('club','?')} | "
-                f"{r.get('nationality','?')} | גיל {int(r.get('age',0) or 0)}) — "
-                f"ארכיטיפ: {r.get('archetype','?')} | גולים: {int(r.get('goals',0))} | "
-                f"בישולים: {int(r.get('assists',0))} | שווי: €{int(r.get('market_value_in_eur',0)):,}"
+                f"{r.get('nationality','?')} | age {int(r.get('age',0) or 0)}) - "
+                f"archetype: {r.get('archetype','?')} | goals: {int(r.get('goals',0))} | "
+                f"assists: {int(r.get('assists',0))} | value: EUR {int(r.get('market_value_in_eur',0)):,}"
             )
         emphasized = ", ".join(k for k in emphasis)
         lines.append(f"\n🔍 Method: Content-based filtering — Cosine similarity to an ideal "

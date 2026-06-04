@@ -1,23 +1,23 @@
 """
 app.py
-שרת Flask של ScoutAI - נקודת הכניסה הראשית
+ScoutAI Flask server - main entry point.
 """
 
 import os
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 
-load_dotenv()  # טוען .env בפיתוח מקומי
+load_dotenv()
 
 from agent import load_resources, build_agent
 
 app = Flask(__name__)
 
-# ── טעינת משאבים פעם אחת ב-startup ───────────────────────────────────────────
-print("[app] מאתחל ScoutAI…", flush=True)
+# Load resources once at startup.
+print("[app] Initializing ScoutAI...", flush=True)
 _engine, _national_strength, _schedule = load_resources()
 _agent = build_agent(_engine, _national_strength, _schedule)
-print("[app] ScoutAI מוכן לקבל שאלות.", flush=True)
+print("[app] ScoutAI is ready.", flush=True)
 
 
 @app.route("/")
@@ -31,15 +31,15 @@ def chat():
     user_msg = (data.get("message") or "").strip()
 
     if not user_msg:
-        return jsonify({"error": "הודעה ריקה"}), 400
+        return jsonify({"error": "Empty message"}), 400
 
     try:
         response = _agent.invoke(user_msg)
     except Exception as e:
-        print(f"[app] שגיאה בעת הרצת agent: {e}", flush=True)
+        print(f"[app] Agent error: {e}", flush=True)
         response = (
-            "מצטער, אירעה שגיאה בעיבוד הבקשה שלך. "
-            "נסה לנסח מחדש את השאלה."
+            "Sorry, an error occurred while processing your request. "
+            "Please try rephrasing the question."
         )
 
     return jsonify({"response": response})
@@ -47,7 +47,7 @@ def chat():
 
 @app.route("/reset", methods=["POST"])
 def reset():
-    """ניקוי היסטוריית השיחה — שיחה חדשה."""
+    """Clear conversation history."""
     _agent.reset()
     return jsonify({"ok": True})
 

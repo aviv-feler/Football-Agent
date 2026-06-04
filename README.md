@@ -1,69 +1,86 @@
-# ⚽ ScoutAI — Football Scout & Predictor Agent
+# ScoutAI - Football Scout & Predictor Agent
 
-סוכן AI לכדורגל שרץ על ממשק web. המשתמש משוחח בשפה חופשית (עברית/אנגלית)
-ומקבל תשובות מבוססות-נתונים על שחקנים, חיזויי משחקים ומידע על מונדיאל 2026.
+ScoutAI is a football data-science web application with a chatbot interface.
+Users can ask football questions in English or Hebrew, while the internal data
+pipeline and model explanations stay in English for consistency and easier grading.
 
-נבנה כפרויקט בקורס **Data Science**.
+The current priority is rebuilding the data layer correctly before expanding the
+agent.
 
-## יכולות
+## Current Goal
 
-- **Scout Mode** — חיפוש שחקנים לפי קריטריונים ומציאת שחקנים דומים
-- **Predictor Mode** — חיזוי תוצאות משחקי מונדיאל 2026
+Build one clean, defensible player database from multiple sources:
 
-## שיטות Data Science
+- `football-data.org` API for current competitions, standings, fixtures, and results.
+- Kaggle/Transfermarkt-style CSV files for player identity, club, nationality,
+  market value, appearances, and real performance stats.
+- Football Manager CSV exports for scouting-style player attributes such as pace,
+  finishing, passing, tackling, decisions, current ability, and potential ability.
 
-| שיטה | שימוש |
-|------|-------|
-| **K-Means clustering** | צמצום מועמדים לאשכול ההתנהגותי של השחקן |
-| **TF-IDF + cosine** | דמיון על מסמך קטגוריאלי לכל שחקן |
-| **Jaccard similarity** | דמיון בין קבוצות התגיות של שחקנים |
-| **IsolationForest** | זיהוי שחקנים חריגים |
-| **National strength** | חוזק נבחרות נגזר מצבירת נתוני השחקנים |
+Football Manager data is especially useful for attribute-based player comparison,
+but it should be documented as an expert/scouting attribute dataset rather than as
+official match-event data.
 
-## כלי הסוכן (LangChain tools)
+## Data-Science Requirements
 
-1. `find_similar_players` — שחקנים דומים (cluster + Jaccard + TF-IDF)
-2. `scout_players` — סקאוטינג לפי קריטריונים בשפה טבעית
-3. `detect_anomalies` — זיהוי חריגות
-4. `predict_match` — חיזוי משחקי נבחרות
-5. `get_live_standings` — טבלאות חיות (football-data.org)
-6. `world_cup_info` — לוח משחקי מונדיאל 2026
+The project should use course models clearly and defensibly:
 
-## הרצה מקומית
+| Course model | Project usage |
+| --- | --- |
+| Cosine similarity | Similar players from normalized numeric player vectors |
+| Euclidean distance | Optional distance view in the same feature space |
+| K-Means clustering | Player archetypes/role profiles |
+| Content-based recommendation | Scout recommendations after filters |
+| Z-score | Anomaly detection inside each K-Means cluster |
+| Jaccard similarity | Categorical trait comparison |
+| Logistic/softmax prediction | Match prediction from team strength or recent-form features |
+
+Every agent tool should end with a `Method:` line explaining the exact model used.
+
+## Planned Data Pipeline
+
+1. Inspect every uploaded CSV/XLSX schema before modeling.
+2. Normalize player/team names and create source-priority rules.
+3. Match player records across real-world CSVs, Football Manager exports, and API context.
+4. Build a single `players_master.csv`.
+5. Engineer numeric features such as per-90 stats, market-value transforms, and FM attributes.
+6. Fill missing numeric values by position-group median.
+7. Scale all model features with `StandardScaler`.
+8. Build `player_features.npy`, K-Means clusters, archetype labels, and metadata.
+9. Validate results with direct tool tests before connecting the chatbot.
+
+## Runtime App
 
 ```bash
 pip install -r requirements.txt
-# צור קובץ .env עם המפתחות (ראה .env.example):
-#   GEMINI_API_KEY=...
-#   FOOTBALL_DATA_API_KEY=...
-python app.py        # http://127.0.0.1:5000
+python app.py
 ```
 
-בדיקת הכלים (ללא צורך במכסת LLM):
-```bash
-python test_tools.py
+Local URL:
+
+```text
+http://127.0.0.1:5000
 ```
 
-## נתונים
+Environment variables:
 
-הנתונים הגולמיים מ-Kaggle כבדים מדי ל-GitHub ואינם כלולים ב-repo:
-- `maso0dahmed/football-players-data`
-- `davidcariboo/player-scores`
-
-ה-repo כולל את **`data/players_clean.csv`** המעובד (שממנו נבנים TF-IDF/clustering
-בזמן ריצה) ואת **`data/fwc26_match_schedule_agent.csv`** (לוח המונדיאל).
-ליצירת `players_clean.csv` מחדש מהנתונים הגולמיים:
-
-```bash
-pip install sentence-transformers==3.0.1
-python data_prep.py
+```text
+GEMINI_API_KEY=...
+FOOTBALL_DATA_API_KEY=...
 ```
 
-## פריסה (Render.com)
+Optional debugging flag:
 
-ראה `render.yaml`. הגדר את `GEMINI_API_KEY` ו-`FOOTBALL_DATA_API_KEY` כמשתני סביבה.
+```text
+SCOUTAI_ENABLE_SMART_QA=1
+```
 
-## הערה על מכסת Gemini
+By default, the app routes common football questions directly to deterministic
+data-science tools. The older `football_qa.py` smart intent pipeline is disabled
+unless this flag is enabled, because it can mix ranking logic and make demo
+answers harder to explain.
 
-פרויקט חדש ב-Gemini API מקבל מכסת free-tier מצומצמת (≈20 בקשות ליום למודל).
-הסוכן מסובב בין כמה מודלים (`MODEL_CHAIN` ב-`agent.py`) כדי למקסם את הקיבולת היומית.
+## Important Note
+
+Do not polish the agent before the data is stable. The next serious milestone is
+data collection, cleaning, matching, and model preparation.

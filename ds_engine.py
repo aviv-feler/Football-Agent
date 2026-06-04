@@ -1,12 +1,12 @@
 """
 ds_engine.py
-מנוע ה-Data Science של ScoutAI — מבוסס וקטורי ביצועים מספריים מנורמלים.
+ScoutAI data-science engine based on normalized numeric player vectors.
 
-שיטות:
-  • Cosine similarity / Euclidean – דמיון בין שחקנים כווקטורים מספריים
-  • K-Means archetypes           – אשכול תפקיד/ארכיטיפ לכל שחקן
-  • Z-score from cluster centroid – זיהוי חריגות
-  • Jaccard                       – דמיון בין קבוצות תכונות קטגוריאליות
+Methods:
+  - Cosine similarity / Euclidean distance for numeric player vectors.
+  - K-Means archetypes for role/profile clustering.
+  - Z-score distance from cluster centroid for anomaly detection.
+  - Jaccard similarity for categorical trait sets.
 """
 
 import json
@@ -20,7 +20,7 @@ META_JSON    = "data/feature_meta.json"
 
 
 def jaccard(a: set, b: set) -> float:
-    """דמיון Jaccard: |חיתוך| / |איחוד|."""
+    """Jaccard similarity: |intersection| / |union|."""
     if not a and not b:
         return 0.0
     u = len(a | b)
@@ -28,17 +28,17 @@ def jaccard(a: set, b: set) -> float:
 
 
 class DSEngine:
-    """מחזיק את כל מבני ה-DS המחושבים מראש ומספק חישובי דמיון/חריגות."""
+    """Holds precomputed DS artifacts and provides similarity/anomaly helpers."""
 
     def __init__(self, df: pd.DataFrame, X: np.ndarray, meta: dict):
         self.df = df.reset_index(drop=True)
-        self.X = X                                  # מטריצת פיצ'רים מנורמלת (N×F)
+        self.X = X
         self.feature_names = meta["feature_names"]
         self.k = meta["k"]
         self.centroids = np.array(meta["centroids"])
         self.archetypes = {int(k): v for k, v in meta["archetypes"].items()}
 
-        # סטטיסטיקות per-cluster לחישוב Z-score (ממוצע וסטיית תקן של כל פיצ'ר באשכול)
+        # Per-cluster stats for Z-score calculations.
         self.cluster_mean, self.cluster_std = {}, {}
         clusters = self.df["cluster"].values
         for c in np.unique(clusters):
@@ -46,7 +46,7 @@ class DSEngine:
             self.cluster_mean[int(c)] = rows.mean(axis=0)
             self.cluster_std[int(c)]  = rows.std(axis=0) + 1e-9
 
-        # מיפוי שם מנורמל → אינדקס (לאיתור שחקן מטרה)
+        # Normalized player name -> row index lookup.
         import unicodedata
         def norm(s):
             if not isinstance(s, str): return ""
@@ -55,7 +55,6 @@ class DSEngine:
         self._norm = norm
         self.names_norm = self.df["player_name"].fillna("").map(norm)
 
-    # ── איתור שחקן לפי שם (השם רק לאיתור, לא לדמיון) ──
     def find_index(self, query: str):
         q = self._norm(query)
         exact = self.df.index[self.names_norm == q]
@@ -73,29 +72,24 @@ class DSEngine:
         return None
 
     def _most_prominent(self, idxs):
-        """מבין כמה התאמות בוחר את בעל שווי השוק הגבוה ביותר (המוכר ביותר)."""
+        """Choose the highest market-value match when several rows match a name."""
         sub = self.df.loc[idxs]
         return int(sub["market_value_in_eur"].fillna(0).idxmax())
 
-    # ── Cosine similarity בין מטרה למועמדים ──
     def cosine(self, target_iloc: int, cand_ilocs: np.ndarray) -> np.ndarray:
         return cosine_similarity(self.X[target_iloc].reshape(1, -1), self.X[cand_ilocs])[0]
 
-    # ── Euclidean distance ──
     def euclidean(self, target_iloc: int, cand_ilocs: np.ndarray) -> np.ndarray:
         return np.linalg.norm(self.X[cand_ilocs] - self.X[target_iloc], axis=1)
 
-    # ── Cosine מול וקטור-מטרה שרירותי (לסקאוט – content-based) ──
     def cosine_to_vector(self, vec: np.ndarray, cand_ilocs: np.ndarray) -> np.ndarray:
         return cosine_similarity(vec.reshape(1, -1), self.X[cand_ilocs])[0]
 
-    # ── Z-score של שחקן מול מרכז האשכול שלו ──
     def zscores(self, iloc: int) -> dict:
         c = int(self.df.iloc[iloc]["cluster"])
         z = (self.X[iloc] - self.cluster_mean[c]) / self.cluster_std[c]
         return {self.feature_names[i]: float(z[i]) for i in range(len(self.feature_names))}
 
-    # ── קבוצת תכונות קטגוריאליות ל-Jaccard ──
     def trait_set(self, iloc: int) -> set:
         r = self.df.iloc[iloc]
         traits = set()
@@ -117,12 +111,12 @@ def load_engine() -> DSEngine:
     X  = np.load(FEATURES_NPY)
     with open(META_JSON, encoding="utf-8") as f:
         meta = json.load(f)
-    print(f"[ds_engine] DSEngine: {X.shape[0]} שחקנים × {X.shape[1]} פיצ'רים, "
-          f"k={meta['k']} אשכולות", flush=True)
+    print(f"[ds_engine] DSEngine: {X.shape[0]} players x {X.shape[1]} features, "
+          f"k={meta['k']} clusters", flush=True)
     return DSEngine(df, X, meta)
 
 
-# ─── חוזק נבחרות (למונדיאל) — מבוסס שווי שוק + עומק סגל ──────────────────────
+# National-team strength for World Cup predictions.
 
 NATION_MAP = {
     "usa": "United States", "korea republic": "Korea, South", "ir iran": "Iran",
@@ -151,8 +145,8 @@ def normalize_nation(name: str, known: set):
 
 
 def build_national_strength(df: pd.DataFrame, squad: int = 23) -> pd.DataFrame:
-    """חוזק נבחרת = צבירת מיטב הסגל לפי שווי שוק (עדכני, אמין)."""
-    print("[ds_engine] בונה טבלת חוזק נבחרות (לפי שווי שוק)...", flush=True)
+    """National-team strength from the top squad players by market value."""
+    print("[ds_engine] Building national-team strength table...", flush=True)
     rows = []
     for nation, grp in df.groupby("nationality"):
         if not isinstance(nation, str):
@@ -172,5 +166,5 @@ def build_national_strength(df: pd.DataFrame, squad: int = 23) -> pd.DataFrame:
     vsum  = np.log1p(nat["squad_value_sum"])  / np.log1p(nat["squad_value_sum"].max())
     depth = np.log1p(nat["depth"]) / np.log1p(nat["depth"].max())
     nat["strength"] = 0.6 * vmean + 0.25 * vsum + 0.15 * depth
-    print(f"[ds_engine] חוזק חושב ל-{len(nat)} נבחרות", flush=True)
+    print(f"[ds_engine] Computed strength for {len(nat)} national teams", flush=True)
     return nat
