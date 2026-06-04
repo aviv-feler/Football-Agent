@@ -2,8 +2,8 @@ services:
   - type: web
     name: scoutai
     env: python
-    # players_clean.csv כבר נמצא ב-repo, ו-TF-IDF/clustering נבנים ב-startup,
-    # לכן אין צורך להריץ data_prep.py בבנייה (הנתונים הגולמיים אינם ב-repo).
+    # Runtime data artifacts are already included in the repo, so data_prep.py
+    # does not need to run during deployment.
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:

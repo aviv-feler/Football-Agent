@@ -64,7 +64,10 @@ def make_world_cup_tool(schedule: pd.DataFrame):
 
 def _format(res: pd.DataFrame, title: str) -> str:
     if res.empty:
-        return f"{title}: לא נמצאו משחקים תואמים."
+        return (
+            f"{title}: לא נמצאו משחקים תואמים."
+            "\n\n🔍 Method: Schedule lookup from the FIFA World Cup 2026 fixture CSV."
+        )
     lines = [f"**{title}** ({len(res)} משחקים):\n"]
     for _, m in res.head(20).iterrows():
         stage = m.get("stage", "")
@@ -75,4 +78,5 @@ def _format(res: pd.DataFrame, title: str) -> str:
             f"| {m.get('team1_name','?')} vs {m.get('team2_name','?')} "
             f"| {m.get('city','?')}, {m.get('venue_country','?')} | {stage}{grp_s}"
         )
+    lines.append("\n🔍 Method: Schedule lookup from the FIFA World Cup 2026 fixture CSV.")
     return "\n".join(lines)

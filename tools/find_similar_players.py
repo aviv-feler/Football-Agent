@@ -23,7 +23,11 @@ def make_find_similar_players_tool(engine):
         """
         idx = engine.find_index(player_name)
         if idx is None:
-            return (f"לא נמצא שחקן בשם '{player_name}'. בדוק איות או נסה שם מלא.")
+            return (
+                f"לא נמצא שחקן בשם '{player_name}'. בדוק איות או נסה שם מלא."
+                f"\n\n🔍 Method: Cosine similarity on {len(engine.feature_names)} "
+                "normalized performance features (same position group)."
+            )
 
         target = df.iloc[idx]
         pos = target["position"]

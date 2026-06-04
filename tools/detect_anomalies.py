@@ -34,7 +34,10 @@ def make_detect_anomalies_tool(engine):
         # סורקים מועמדים מבוססים (≥3000 דקות ≈ עונה+) אחרת per-90 רועש מאוד
         sub = sub[sub["minutes_played"] >= 3000]
         if sub.empty:
-            return "אין מספיק שחקנים עם זמן משחק לניתוח חריגות."
+            return (
+                "אין מספיק שחקנים עם זמן משחק לניתוח חריגות."
+                "\n\n🔍 Method: Z-score deviation from K-Means cluster centroid (|z|>2)."
+            )
 
         findings = []
         for il in (df.index.get_loc(i) for i in sub.index):
@@ -46,7 +49,10 @@ def make_detect_anomalies_tool(engine):
                 findings.append((il, worst, zval))
 
         if not findings:
-            return f"לא נמצאו שחקנים חריגים{' עבור ' + filter_by if filter_by else ''} (|z|>2)."
+            return (
+                f"לא נמצאו שחקנים חריגים{' עבור ' + filter_by if filter_by else ''} (|z|>2)."
+                "\n\n🔍 Method: Z-score deviation from K-Means cluster centroid (|z|>2)."
+            )
 
         findings.sort(key=lambda t: abs(t[2]), reverse=True)
         lines = [f"**שחקנים חריגים{' — ' + filter_by if filter_by else ''}** "

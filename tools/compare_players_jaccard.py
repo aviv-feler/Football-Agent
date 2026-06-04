@@ -22,13 +22,22 @@ def make_compare_players_jaccard_tool(engine):
         """
         parts = [p.strip() for p in __import__("re").split(r"\s+vs\s+|,|\s+and\s+|\s+ו-?", players) if p.strip()]
         if len(parts) < 2:
-            return "ציין שני שחקנים, למשל: 'Mbappé vs Haaland'."
+            return (
+                "ציין שני שחקנים, למשל: 'Mbappé vs Haaland'."
+                "\n\n🔍 Method: Jaccard similarity on categorical trait sets."
+            )
 
         i1, i2 = engine.find_index(parts[0]), engine.find_index(parts[1])
         if i1 is None:
-            return f"לא נמצא שחקן: '{parts[0]}'."
+            return (
+                f"לא נמצא שחקן: '{parts[0]}'."
+                "\n\n🔍 Method: Jaccard similarity on categorical trait sets."
+            )
         if i2 is None:
-            return f"לא נמצא שחקן: '{parts[1]}'."
+            return (
+                f"לא נמצא שחקן: '{parts[1]}'."
+                "\n\n🔍 Method: Jaccard similarity on categorical trait sets."
+            )
 
         s1, s2 = engine.trait_set(i1), engine.trait_set(i2)
         j = jaccard(s1, s2)

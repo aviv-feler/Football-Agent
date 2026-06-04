@@ -9,19 +9,19 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:          #0a0e1a;
-      --bg2:         #111827;
-      --bg3:         #1a2235;
-      --card:        #1e2d42;
-      --green:       #00ff87;
-      --green-dim:   #00cc6a;
-      --green-glow:  rgba(0,255,135,.18);
-      --text:        #e8eaf0;
-      --text-muted:  #8899aa;
-      --border:      #2a3a52;
-      --user-bubble: #00ff87;
-      --bot-bubble:  #1e2d42;
-      --radius:      14px;
+      --bg:          #070b12;
+      --bg2:         #101722;
+      --bg3:         #162232;
+      --card:        #172638;
+      --green:       #20f08b;
+      --green-dim:   #12c873;
+      --green-glow:  rgba(32,240,139,.16);
+      --text:        #f0f4f8;
+      --text-muted:  #a7b4c4;
+      --border:      #314257;
+      --user-bubble: #20f08b;
+      --bot-bubble:  #18283a;
+      --radius:      8px;
       --font:        'Segoe UI', system-ui, sans-serif;
     }
 
@@ -56,15 +56,15 @@
     /* ── Header ─────────────────────────────────────────────────────────── */
     header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 18px 40px;
-      background: rgba(10,14,26,.85);
+      padding: 16px 36px;
+      background: rgba(7,11,18,.9);
       backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
       position: sticky; top: 0; z-index: 100;
     }
     .logo {
       display: flex; align-items: center; gap: 12px;
-      font-size: 1.5rem; font-weight: 800; letter-spacing: -0.5px;
+      font-size: 1.45rem; font-weight: 800; letter-spacing: 0;
       color: var(--green);
       text-shadow: 0 0 20px var(--green-glow);
     }
@@ -79,11 +79,11 @@
 
     /* ── Hero ───────────────────────────────────────────────────────────── */
     .hero {
-      text-align: center; padding: 60px 20px 30px;
+      text-align: center; padding: 42px 20px 24px;
     }
     .hero h1 {
-      font-size: clamp(2rem, 5vw, 3.2rem);
-      font-weight: 900; letter-spacing: -1px;
+      font-size: clamp(2rem, 4vw, 3rem);
+      font-weight: 900; letter-spacing: 0;
       background: linear-gradient(135deg, #fff 30%, var(--green));
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -110,7 +110,7 @@
 
     /* ── Chat container ─────────────────────────────────────────────────── */
     .chat-wrapper {
-      width: min(640px, 96vw);
+      width: min(860px, 96vw);
       margin: 0 auto 60px;
       display: flex; flex-direction: column; gap: 0;
     }
@@ -135,12 +135,13 @@
       background: var(--bg2);
       border: 1px solid var(--border);
       border-radius: var(--radius) var(--radius) 0 0;
-      height: 500px; overflow-y: auto;
-      padding: 20px; display: flex; flex-direction: column; gap: 16px;
+      height: min(560px, 62vh); overflow-y: auto;
+      padding: 22px; display: flex; flex-direction: column; gap: 16px;
+      box-shadow: 0 20px 48px rgba(0,0,0,.28);
     }
 
     /* Messages */
-    .msg { display: flex; gap: 10px; align-items: flex-end; max-width: 90%; }
+    .msg { display: flex; gap: 10px; align-items: flex-end; max-width: min(92%, 760px); }
     .msg.user  { flex-direction: row-reverse; align-self: flex-end; }
     .msg.bot   { align-self: flex-start; }
 
@@ -153,9 +154,11 @@
     .msg.bot  .avatar { background: var(--card); border: 1px solid var(--border); }
 
     .bubble {
-      padding: 12px 16px; border-radius: var(--radius); font-size: .92rem;
-      line-height: 1.65; max-width: 100%;
+      padding: 13px 16px; border-radius: var(--radius); font-size: .96rem;
+      line-height: 1.7; max-width: 100%;
       white-space: pre-wrap; word-break: break-word;
+      text-align: start;
+      unicode-bidi: plaintext;
     }
     .msg.user .bubble {
       background: var(--green); color: #0a0e1a; font-weight: 500;
@@ -197,7 +200,7 @@
     }
     #user-input {
       flex: 1; background: transparent; border: none; outline: none;
-      color: var(--text); font-size: .95rem; padding: 16px 18px;
+      color: var(--text); font-size: 1rem; padding: 16px 18px;
       font-family: var(--font); resize: none; height: 56px;
       direction: auto;
     }
@@ -211,6 +214,10 @@
     #send-btn:hover  { background: var(--green-dim); }
     #send-btn:active { background: #00b359; }
     #send-btn:disabled { background: var(--border); cursor: not-allowed; }
+    button:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }
 
     /* ── Footer ─────────────────────────────────────────────────────────── */
     footer {
@@ -224,7 +231,9 @@
     @media (max-width: 480px) {
       header { padding: 14px 20px; }
       .hero  { padding: 40px 16px 20px; }
-      .chat-window { height: 420px; }
+      .chat-window { height: 56vh; padding: 16px; }
+      .header-badge { display: none; }
+      .msg { max-width: 96%; }
     }
   </style>
 </head>
@@ -329,19 +338,36 @@
   const sendBtn    = document.getElementById('send-btn');
   const typingRow  = document.getElementById('typing-row');
 
+  function makeSessionId() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  let sessionId = localStorage.getItem('scoutai_session_id') || makeSessionId();
+  localStorage.setItem('scoutai_session_id', sessionId);
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function scrollBottom() {
     chatWindow.scrollTop = chatWindow.scrollHeight;
   }
 
-  /** Render **bold** markdown syntax in bubble text */
+  function escapeHTML(text) {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /** Render a tiny safe subset of markdown syntax in bubble text */
   function renderMarkdown(text) {
     // הגנה: אם התקבל ערך שאינו מחרוזת (למשל רשימת בלוקים) — נמיר אותו
     if (typeof text !== 'string') {
       text = (text == null) ? '' : String(text);
     }
-    return text
+    return escapeHTML(text)
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\n/g, '<br>');
   }
@@ -349,6 +375,7 @@
   function appendMsg(role, text) {
     const wrap   = document.createElement('div');
     wrap.className = `msg ${role}`;
+    wrap.dir = 'auto';
 
     const avatar = document.createElement('div');
     avatar.className = 'avatar';
@@ -356,6 +383,7 @@
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
+    bubble.dir = 'auto';
     bubble.innerHTML = renderMarkdown(text);
 
     wrap.appendChild(avatar);
@@ -385,9 +413,13 @@
       const res  = await fetch('/chat', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ message: msg }),
+        body:    JSON.stringify({ message: msg, session_id: sessionId }),
       });
       const data = await res.json();
+      if (data.session_id) {
+        sessionId = data.session_id;
+        localStorage.setItem('scoutai_session_id', sessionId);
+      }
       appendMsg('bot', data.response || data.error || 'אירעה שגיאה לא ידועה.');
     } catch (err) {
       appendMsg('bot', 'שגיאת רשת — אנא נסה שנית.');
@@ -403,7 +435,15 @@
 
   // ── New chat: clear server context + reset the window ──
   async function newChat() {
-    try { await fetch('/reset', { method: 'POST' }); } catch (e) {}
+    try {
+      await fetch('/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+    } catch (e) {}
+    sessionId = makeSessionId();
+    localStorage.setItem('scoutai_session_id', sessionId);
     // משאירים רק את הודעת הפתיחה (הראשונה)
     const msgs = chatWindow.querySelectorAll('.msg');
     msgs.forEach((m, i) => { if (i > 0) m.remove(); });

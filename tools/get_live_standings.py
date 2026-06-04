@@ -46,6 +46,7 @@ def make_get_live_standings_tool():
             return (
                 "FOOTBALL_DATA_API_KEY לא הוגדר. "
                 "הוסף את המפתח כמשתנה סביבה כדי לקבל נתונים חיים."
+                "\n\n🔍 Method: Live standings lookup via football-data.org API."
             )
 
         comp_lower = competition.strip().lower()
@@ -59,6 +60,7 @@ def make_get_live_standings_tool():
             return (
                 f"לא נמצאה תחרות בשם '{competition}'. "
                 f"תחרויות זמינות: {', '.join(COMPETITION_MAP.keys())}"
+                "\n\n🔍 Method: Live standings lookup via football-data.org API."
             )
 
         headers = _get_headers()
@@ -97,6 +99,7 @@ def make_get_live_standings_tool():
                         ga    = row.get("goalsAgainst", 0)
                         pts   = row.get("points", 0)
                         lines.append(f"{pos:<3} {team:<25} {played:<4} {won:<4} {draw:<4} {lost:<4} {gf:<6} {ga:<6} {pts:<5}")
+                    lines.append("\n🔍 Method: Live standings lookup via football-data.org API.")
                     return "\n".join(lines)
 
             # fallback: fixtures
@@ -114,11 +117,18 @@ def make_get_live_standings_tool():
                         home  = m.get("homeTeam", {}).get("name", "?")
                         away  = m.get("awayTeam", {}).get("name", "?")
                         lines.append(f"• {date}: {home} vs {away}")
+                    lines.append("\n🔍 Method: Live fixture lookup via football-data.org API.")
                     return "\n".join(lines)
 
-            return f"לא הצלחתי לשלוף נתונים עבור {competition} (קוד: {resp.status_code})."
+            return (
+                f"לא הצלחתי לשלוף נתונים עבור {competition} (קוד: {resp.status_code})."
+                "\n\n🔍 Method: Live standings lookup via football-data.org API."
+            )
 
         except requests.RequestException as e:
-            return f"שגיאת רשת בעת גישה ל-API: {e}"
+            return (
+                f"שגיאת רשת בעת גישה ל-API: {e}"
+                "\n\n🔍 Method: Live standings lookup via football-data.org API."
+            )
 
     return get_live_standings

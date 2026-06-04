@@ -21,7 +21,11 @@ def make_get_player_archetype_tool(engine):
         """
         idx = engine.find_index(player_name)
         if idx is None:
-            return f"לא נמצא שחקן בשם '{player_name}'."
+            return (
+                f"לא נמצא שחקן בשם '{player_name}'."
+                f"\n\n🔍 Method: K-Means clustering (k={engine.k}) on "
+                f"{len(engine.feature_names)} normalized features."
+            )
 
         r = df.iloc[idx]
         c = int(r["cluster"])

@@ -4,22 +4,14 @@ tools/predict_match.py
 
 לנבחרות לאומיות (מונדיאל): משתמש בטבלת חוזק הנבחרות שנגזרה מנתוני השחקנים
 (צבירת מיטב הסגל לפי דירוג/שווי) — שיטת Data Science אמיתית.
-למועדונים: מנסה לשלוף נתונים חיים מ-football-data.org, אחרת חוזק כללי.
+הכלי מתמקד בנבחרות לאומיות שקיימות בנתוני השחקנים המקומיים.
 """
 
-import os
 import numpy as np
 import pandas as pd
-import requests
 from langchain.tools import tool
 
 from ds_engine import normalize_nation
-
-API_BASE = "https://api.football-data.org/v4"
-
-
-def _headers() -> dict:
-    return {"X-Auth-Token": os.getenv("FOOTBALL_DATA_API_KEY", "")}
 
 
 def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame):
@@ -83,6 +75,7 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame):
             f"לא הצלחתי לבנות חיזוי מבוסס-נתונים עבור: {', '.join(missing)}. "
             "החיזוי מבוסס על נבחרות לאומיות שיש להן שחקנים בנתונים. "
             "נסה שמות נבחרות מלאים (למשל Brazil, France, Argentina)."
+            "\n\n🔍 Method: Squad-strength lookup from aggregated player market values."
         )
 
     return predict_match

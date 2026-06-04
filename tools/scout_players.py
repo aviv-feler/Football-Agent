@@ -100,7 +100,11 @@ def make_scout_players_tool(engine, wc_nations: set | None = None):
             emphasis.setdefault("ga_per90", 1.0)
 
         if cand.empty:
-            return f"לא נמצאו שחקנים שתואמים את '{criteria}'. נסה לרכך את הקריטריונים."
+            return (
+                f"לא נמצאו שחקנים שתואמים את '{criteria}'. נסה לרכך את הקריטריונים."
+                "\n\n🔍 Method: Content-based filtering — Cosine similarity to an ideal "
+                "profile after hard filters."
+            )
 
         # ── וקטור-מטרה אידיאלי (z-space): 0=ממוצע, דגשים חיוביים/שליליים ──
         target = np.zeros(len(engine.feature_names))

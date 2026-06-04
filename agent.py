@@ -1,11 +1,12 @@
 """
 agent.py
 ScoutAI agent - בנוי עם tool calling ישיר (LangChain 1.x / langchain-google-genai 4.x).
-החיפוש מבוסס שיטות Data Science: K-Means clustering, TF-IDF, Jaccard.
+החיפוש מבוסס שיטות Data Science: K-Means clustering, Cosine similarity, Jaccard.
 """
 
 import os
 import time
+import threading
 import numpy as np
 import pandas as pd
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -69,10 +70,10 @@ def load_resources():
 # רשימת מודלים לסבב. לכל מודל מכסת free-tier יומית נפרדת (20/יום בפרויקט חדש),
 # כך שסבב על כמה מודלים מגדיל את הקיבולת היומית הכוללת.
 MODEL_CHAIN = [
-    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",        # ראשי — חכם יותר לניתוב וניסוח
+    "gemini-flash-latest",     # גיבוי באותה רמה
+    "gemini-2.5-flash-lite",   # גיבוי קל יותר (מכסה נפרדת)
     "gemini-flash-lite-latest",
-    "gemini-2.5-flash",
-    "gemini-flash-latest",
     "gemini-2.0-flash",
 ]
 
@@ -90,20 +91,31 @@ class ScoutAgent:
         self.model_idx = 0
         self.tool_map = {t.name: t for t in tools}
         self.system_msg = SystemMessage(content=SYSTEM_PROMPT)
-        # היסטוריית שיחה (זוגות human/ai) לשמירת הקשר בין פניות
-        self.history: list = []
+        # היסטוריית שיחה נפרדת לכל session כדי למנוע ערבוב בין משתמשים.
+        self.histories: dict[str, list] = {}
+        self._lock = threading.RLock()
 
-    def _remember(self, user_input: str, answer: str):
+    def _get_history(self, session_id: str) -> list:
+        with self._lock:
+            return list(self.histories.get(session_id, []))
+
+    def _remember(self, session_id: str, user_input: str, answer: str):
         """שומר את התור הנוכחי בהיסטוריה וגוזם לאורך המקסימלי."""
-        self.history.append(HumanMessage(content=user_input))
-        self.history.append(AIMessage(content=answer))
-        max_msgs = self.MAX_HISTORY_TURNS * 2
-        if len(self.history) > max_msgs:
-            self.history = self.history[-max_msgs:]
+        with self._lock:
+            history = self.histories.setdefault(session_id, [])
+            history.append(HumanMessage(content=user_input))
+            history.append(AIMessage(content=answer))
+            max_msgs = self.MAX_HISTORY_TURNS * 2
+            if len(history) > max_msgs:
+                self.histories[session_id] = history[-max_msgs:]
 
-    def reset(self):
+    def reset(self, session_id: str | None = None):
         """ניקוי היסטוריית השיחה (שיחה חדשה)."""
-        self.history = []
+        with self._lock:
+            if session_id:
+                self.histories.pop(session_id, None)
+            else:
+                self.histories = {}
 
     @staticmethod
     def _extract_text(content) -> str:
@@ -149,7 +161,7 @@ class ScoutAgent:
                 return "Hebrew"
         return "English"
 
-    def invoke(self, user_input: str) -> str:
+    def invoke(self, user_input: str, session_id: str = "default") -> str:
         lang = self._detect_language(user_input)
         # הנחיית שפה חזקה לכל פנייה — כלי הנתונים מחזירים תוויות בעברית,
         # ולכן צריך לכפות מפורשות לענות בשפת המשתמש.
@@ -160,7 +172,8 @@ class ScoutAgent:
             f"and the '🔍 Method:' line unchanged."
         ))
         # ההיסטוריה מצורפת לפני התור הנוכחי כדי לשמר הקשר בין פניות
-        messages = [self.system_msg, *self.history, lang_directive,
+        history = self._get_history(session_id)
+        messages = [self.system_msg, *history, lang_directive,
                     HumanMessage(content=user_input)]
         for _ in range(self.MAX_ITERATIONS):
             try:
@@ -177,7 +190,7 @@ class ScoutAgent:
 
             if not getattr(response, "tool_calls", None):
                 answer = self._extract_text(response.content) or "אין תגובה."
-                self._remember(user_input, answer)
+                self._remember(session_id, user_input, answer)
                 return answer
 
             for tc in response.tool_calls:
@@ -226,6 +239,9 @@ def build_agent(engine, national_strength, schedule):
 
     # בונים מופע לכל מודל בשרשרת (כל אחד עם bind_tools) לצורך סבב על מיצוי מכסה
     api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not configured. Add it to .env or the hosting environment.")
+
     llms_with_tools = []
     for model_name in MODEL_CHAIN:
         llm = ChatGoogleGenerativeAI(
