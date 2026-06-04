@@ -35,19 +35,46 @@ CLUBS_FILE = DATA_DIR / "clubs.csv"
 GAMES_FILE = DATA_DIR / "games.csv"
 FEATURES_FILE = DATA_DIR / "player_features.npy"
 SOURCE_MAP_FILE = DATA_DIR / "data_source_map.json"
-FOOTBALL_WORKBOOK_FILE = DATA_DIR / "Football_clubs_players_full.xlsx"
+FOOTBALL_WORKBOOK_FILE = DATA_DIR / "Football_clubs_players_full.xlsx"  # retired, kept for back-compat
 CURRENT_STATS_SHEET = "players_statistics_final"
 
-DATA_VERSION = "2026-06-03-source-priority-v2"
+# Current-season (2025-26) top-5 league player statistics (FBref export).
+# Replaces the retired Football_clubs_players_full.xlsx workbook.
+FBREF_CURRENT_FILE = DATA_DIR / "players_data-2025_2026.csv"
+
+# FBref column -> internal name used by the ranking/scoring functions below.
+FBREF_COLUMN_MAP = {
+    "Player": "Player_Name",
+    "Comp":   "League",
+    "Squad":  "Club",
+    "Pos":    "Position",
+    "MP":     "Matches_Played",
+    "Min":    "Minutes_Played",
+    "Gls":    "Goals",
+    "Ast":    "Assists",
+    "Sh":     "Shots",
+    "SoT":    "Shots_On_Target",
+    "Int":    "Interceptions",
+    "TklW":   "Tackles_Won",
+    "Crs":    "Crs",
+    "CrdY":   "Yellow_Cards",
+    "CrdR":   "Red_Cards",
+}
+FBREF_NUMERIC_COLS = [
+    "Matches_Played", "Minutes_Played", "Goals", "Assists", "Shots",
+    "Shots_On_Target", "Interceptions", "Tackles_Won", "Crs",
+    "Yellow_Cards", "Red_Cards",
+]
+
+DATA_VERSION = "2026-06-04-fbref-current-v3"
 
 
 SOURCE_PRIORITY: dict[str, Any] = {
     "current_player_rankings": [
         {
             "priority": 1,
-            "file": "data/Football_clubs_players_full.xlsx",
-            "sheet": "players_statistics_final",
-            "reason": "Current/season-style player statistics for ranking questions.",
+            "file": "data/players_data-2025_2026.csv",
+            "reason": "Current-season (2025-26) top-5 league player statistics from FBref.",
         },
         {"priority": 2, "file": "Football-Data API", "reason": "Fresh scorers/standings when relevant and available."},
         {"priority": 3, "file": "data/player_profiles.csv", "reason": "Fallback only; contains aggregated profile context."},
@@ -59,8 +86,11 @@ SOURCE_PRIORITY: dict[str, Any] = {
     ],
     "player_similarity": [
         {"priority": 1, "file": "data/player_profiles.csv", "reason": "Rebuilt profiles with position-aware scores and clusters."},
-        {"priority": 2, "file": "data/player_features.npy", "reason": "Legacy numeric vectors; used only while row-aligned."},
-        {"priority": 3, "file": "data/feature_meta.json", "reason": "K-Means metadata."},
+        {"priority": 2, "file": "data/player_features.npy", "reason": "Normalized 16-d player vectors (perf + FC26 style), row-aligned to players_clean.csv."},
+        {"priority": 3, "file": "data/feature_meta.json", "reason": "K-Means + scaler metadata."},
+    ],
+    "player_attributes": [
+        {"priority": 1, "file": "data/FC26_20250921.csv", "reason": "EA FC26 (Sep 2025) playing-style attributes + potential; joined by dob + name tokens."},
     ],
     "player_stats": [
         {"priority": 1, "file": "data/appearances.csv", "reason": "Match appearance aggregates."},
@@ -73,10 +103,14 @@ SOURCE_PRIORITY: dict[str, Any] = {
     "matches_results": [
         {"priority": 1, "file": "Football-Data API", "reason": "Fresh standings/results when key is available."},
         {"priority": 2, "file": "data/games.csv", "reason": "Local historical match data fallback."},
-        {"priority": 3, "file": "data/club_games.csv", "reason": "Club-side match aggregates fallback."},
+        {"priority": 3, "file": "data/<league folders>/", "reason": "Top-5 league results + odds for the club match-prediction model."},
     ],
     "world_cup_schedule": [
         {"priority": 1, "file": "data/fwc26_match_schedule_agent.csv", "reason": "Local World Cup 2026 schedule."}
+    ],
+    "national_prediction": [
+        {"priority": 1, "file": "data/national_matches.csv", "reason": "Historical World Cup results (2010/2014/2018/2022) for the Elo pedigree term, built from data/WorldCup*.xlsx."},
+        {"priority": 2, "file": "player market values (squad strength)", "reason": "Current squad strength; sole signal for teams without World Cup history."},
     ],
 }
 
@@ -261,22 +295,40 @@ def load_matches() -> pd.DataFrame:
 
 
 def load_current_player_stats() -> pd.DataFrame:
-    df = _read_xlsx_sheet(FOOTBALL_WORKBOOK_FILE, CURRENT_STATS_SHEET)
-    numeric_cols = [
-        "Age", "Matches_Played", "Starts", "Minutes_Played", "90s", "Goals", "Assists",
-        "Total_Gls_Ast", "Non_Penalty_Goals", "Shots", "Shots_On_Target", "Interceptions",
-        "Tackles_Won", "Blocks", "Fouls_Committed", "Fouls_Drawn", "Crs", "Compl",
-    ]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-    df["league_name"] = df["League"].map(normalize_league)
-    df["position_group"] = df["Position"].map(_position_group)
-    df["player_name"] = df["Player_Name"].fillna("").astype(str)
-    df["club"] = df["Club"].fillna("").astype(str)
-    df["source_file"] = str(FOOTBALL_WORKBOOK_FILE).replace("\\", "/")
-    df["source_sheet"] = CURRENT_STATS_SHEET
-    return df
+    """Current-season (2025-26) top-5 league player stats from FBref.
+
+    Replaces the retired Football_clubs_players_full.xlsx workbook. Returns one row
+    per player (counting stats summed across clubs for mid-season transfers), using
+    the column names the ranking/scoring functions expect. FBref's `Compl` column is
+    *complete matches*, not pass completions, so a real `Compl` (passing) signal is
+    left at 0 here and sourced from FC26 attributes downstream.
+    """
+    raw = pd.read_csv(FBREF_CURRENT_FILE, low_memory=False)
+    cols = {src: dst for src, dst in FBREF_COLUMN_MAP.items() if src in raw.columns}
+    df = raw[list(cols)].rename(columns=cols)
+    for col in FBREF_NUMERIC_COLS:
+        df[col] = pd.to_numeric(df.get(col), errors="coerce").fillna(0)
+    df["Player_Name"] = df["Player_Name"].fillna("").astype(str)
+    df["_player_key"] = df["Player_Name"].map(normalize_text)
+    df = df[df["_player_key"] != ""].copy()
+
+    # Aggregate to one row per player: sum counting stats across clubs, and keep the
+    # highest-minutes club/league/position as the player's primary affiliation.
+    agg = df.groupby("_player_key", as_index=False)[FBREF_NUMERIC_COLS].sum()
+    primary = (
+        df.sort_values("Minutes_Played", ascending=False)
+        .drop_duplicates("_player_key")[["_player_key", "Player_Name", "Club", "League", "Position"]]
+    )
+    out = agg.merge(primary, on="_player_key", how="left").drop(columns=["_player_key"])
+
+    out["Compl"] = 0  # FBref export has no pass-completion data; FC26 covers passing.
+    out["league_name"] = out["League"].map(normalize_league)
+    out["position_group"] = out["Position"].map(_position_group)
+    out["player_name"] = out["Player_Name"].fillna("").astype(str)
+    out["club"] = out["Club"].fillna("").astype(str)
+    out["source_file"] = str(FBREF_CURRENT_FILE).replace("\\", "/")
+    out["source_sheet"] = "FBref 2025-26"
+    return out
 
 
 def _filter_current_stats(
@@ -572,6 +624,10 @@ def regenerate_player_profiles(output_path: Path = PLAYER_PROFILES_FILE) -> pd.D
         (1 - ((pd.to_numeric(profile["age"], errors="coerce").fillna(30).clip(16, 36) - 16) / 20)).clip(0, 1)
         * (0.4 + 0.6 * profile["overall_score"])
     )
+    # Prefer EA FC26's real potential rating (0-100) where the player was matched.
+    if "fc_potential" in profile.columns:
+        fc_pot = pd.to_numeric(profile["fc_potential"], errors="coerce") / 100.0
+        profile["potential_score"] = fc_pot.fillna(profile["potential_score"])
     profile = _assign_position_profiles(profile)
     profile = profile.drop(columns=["_player_key"], errors="ignore")
 

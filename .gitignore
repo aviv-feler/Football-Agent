@@ -20,3 +20,4 @@ data/*
 !data/feature_meta.json
 !data/fwc26_match_schedule_agent.csv
 !data/data_source_map.json
+!data/national_matches.csv

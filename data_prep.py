@@ -8,31 +8,57 @@ Data Science steps:
   - Normalization: StandardScaler z-scores for meaningful similarity.
   - K-Means: player archetype clusters, with k selected by the elbow method.
 
-Input:  data/players.csv, data/appearances.csv
+Input:  data/players.csv (identity + market value), data/appearances.csv (career stats),
+        data/players_data-2025_2026.csv (FBref current-season overlay, via data_manager),
+        data/FC26_20250921.csv (EA FC26 playing-style attributes).
 Output: data/players_clean.csv, data/player_features.npy, data/feature_meta.json
 """
 
 import os
 import sys
 import json
+import unicodedata
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 
+
+def _norm_name(s) -> str:
+    """Accent-insensitive lowercase key for joining across data sources."""
+    s = "" if pd.isna(s) else str(s)
+    nf = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nf if not unicodedata.combining(c)).lower().strip()
+
 PLAYERS_CSV     = "data/players.csv"
 APPEARANCES_CSV = "data/appearances.csv"
-FIFA_CSV        = "data/fifa_players.csv"
+FC26_CSV        = "data/FC26_20250921.csv"
 OUTPUT_CSV      = "data/players_clean.csv"
 FEATURES_NPY    = "data/player_features.npy"
 META_JSON       = "data/feature_meta.json"
 
-# Numeric features that make up the player performance vector.
-FEATURE_COLS = [
+# Numeric performance features (per-90 stats + profile descriptors).
+PERF_FEATURE_COLS = [
     "goals_per90", "assists_per90", "ga_per90", "cards_per90",
     "minutes_played_log", "appearances_log", "age", "height_in_cm",
     "market_value_log", "international_caps_log",
 ]
+# EA FC26 playing-style attributes added to the similarity vector (0-100 scale).
+FC26_STYLE_COLS = [
+    "fc_pace", "fc_shooting", "fc_passing", "fc_dribbling", "fc_defending", "fc_physic",
+]
+# FC26 quality/potential columns kept on the player table but NOT in the style vector
+# (overall quality is already represented by market value).
+FC26_EXTRA_COLS = ["fc_overall", "fc_potential"]
+# FC26 source column -> our column name.
+FC26_SOURCE_MAP = {
+    "pace": "fc_pace", "shooting": "fc_shooting", "passing": "fc_passing",
+    "dribbling": "fc_dribbling", "defending": "fc_defending", "physic": "fc_physic",
+    "overall": "fc_overall", "potential": "fc_potential",
+}
+
+# Full feature set that makes up the normalized player vector.
+FEATURE_COLS = PERF_FEATURE_COLS + FC26_STYLE_COLS
 # Skewed features transformed with log1p before scaling.
 LOG_COLS = {
     "minutes_played": "minutes_played_log",
@@ -88,6 +114,138 @@ def load_appearances(path: str) -> pd.DataFrame:
     ).reset_index()
     log(f"  {len(agg)} players with appearance data")
     return agg
+
+
+def apply_current_stats(df: pd.DataFrame) -> pd.DataFrame:
+    """Overlay current-season (2025-26 FBref) stats on top of career aggregates.
+
+    For every player matched to the FBref top-5 dataset by name, the goals/assists/
+    minutes/cards/appearances used for the feature vector come from 2025-26, so
+    similarity and archetypes reflect current form. Unmatched players keep their
+    career aggregates. A `stats_source` column records which was used.
+    """
+    df["stats_source"] = "career"
+    try:
+        import data_manager as dm
+        cur = dm.load_current_player_stats()
+    except Exception as exc:
+        log(f"WARNING: current FBref stats unavailable, using career only: {exc}")
+        return df
+
+    cur = cur.copy()
+    cur["_key"] = cur["player_name"].map(_norm_name)
+    cur = cur[cur["_key"] != ""].drop_duplicates("_key")
+
+    # Resolve name -> player_id via the highest-value player for each name (collisions).
+    base = df[["player_id", "player_name", "market_value_in_eur"]].copy()
+    base["_key"] = base["player_name"].map(_norm_name)
+    base = (base.sort_values("market_value_in_eur", ascending=False)
+                .drop_duplicates("_key"))
+    link = base.merge(cur, on="_key", how="inner")
+
+    cur_by_id = {
+        int(r.player_id): r for r in link.itertuples(index=False)
+    }
+    matched = 0
+    df = df.set_index("player_id")
+    for pid, r in cur_by_id.items():
+        if pid not in df.index:
+            continue
+        df.at[pid, "goals"]          = float(r.Goals)
+        df.at[pid, "assists"]        = float(r.Assists)
+        df.at[pid, "minutes_played"] = float(r.Minutes_Played)
+        df.at[pid, "yellow_cards"]   = float(getattr(r, "Yellow_Cards", 0) or 0)
+        df.at[pid, "red_cards"]      = float(getattr(r, "Red_Cards", 0) or 0)
+        df.at[pid, "appearances"]    = float(r.Matches_Played)
+        df.at[pid, "stats_source"]   = "fbref_2025_26"
+        matched += 1
+    df = df.reset_index()
+    log(f"  Overlaid current 2025-26 stats on {matched} players "
+        f"({len(cur)} FBref players, {len(link)} name-linked).")
+    return df
+
+
+def load_fc26(players_df: pd.DataFrame) -> pd.DataFrame:
+    """Attach EA FC26 (Sep 2025) playing-style attributes to players by player_id.
+
+    FC26's `long_name` is a legal name (e.g. 'Jude Victor William Bellingham'), so the
+    primary match key is date-of-birth + last name, with a full-name fallback. Returns
+    player_id + fc_* columns; unmatched players get NaN (filled later by position median).
+    """
+    empty = pd.DataFrame(columns=["player_id"] + list(FC26_SOURCE_MAP.values()))
+    if not os.path.exists(FC26_CSV):
+        log(f"WARNING: {FC26_CSV} not found; skipping FC26 attributes.")
+        return empty
+
+    fc = pd.read_csv(FC26_CSV, low_memory=False)
+    for src in FC26_SOURCE_MAP:
+        fc[src] = pd.to_numeric(fc.get(src), errors="coerce")
+    fc = fc.rename(columns=FC26_SOURCE_MAP)
+    dst = list(FC26_SOURCE_MAP.values())
+
+    def tokens(name) -> set:
+        # FC26 legal names append extra surnames ("Mbappé Lottin") and spell some names
+        # differently ("Håland"), so match on token overlap rather than exact surname.
+        return {t for t in _norm_name(name).split() if len(t) >= 2}
+
+    def fuzzy_overlap(ptok: set, ftok: set) -> int:
+        # Count shared name tokens, treating a shared 4-char prefix as a match so
+        # nicknames align with legal names ("pedri"~"pedro", "rodri"~"rodrigo").
+        n = 0
+        for a in ptok:
+            for b in ftok:
+                if a == b or (len(a) >= 4 and len(b) >= 4 and a[:4] == b[:4]):
+                    n += 1
+                    break
+        return n
+
+    bad = {"", "nan", "nat", "none"}
+    # Index FC26 rows by date of birth -> list of (token set, attribute row).
+    fc["dobkey"] = fc["dob"].astype(str).str[:10]
+    fc["fullkey"] = fc["long_name"].map(_norm_name)
+    fc = fc.sort_values("fc_overall", ascending=False, na_position="last")
+    dob_index: dict[str, list] = {}
+    full_index: dict[str, object] = {}
+    for r in fc.itertuples(index=False):
+        rec = (tokens(getattr(r, "long_name")), r)
+        if r.dobkey not in bad:
+            dob_index.setdefault(r.dobkey, []).append(rec)
+        if r.fullkey not in bad and r.fullkey not in full_index:
+            full_index[r.fullkey] = r
+
+    fields = ["fc_pace", "fc_shooting", "fc_passing", "fc_dribbling",
+              "fc_defending", "fc_physic", "fc_overall", "fc_potential"]
+    rows = []
+    matched = 0
+    for p in players_df[["player_id", "player_name", "date_of_birth"]].itertuples(index=False):
+        dob = str(p.date_of_birth)[:10]
+        ptok = tokens(p.player_name)
+        chosen = None
+        cands = dob_index.get(dob)
+        if cands and ptok:
+            # Best name-token overlap among players born the same day (≥1 shared token).
+            best_overlap, best = 0, None
+            for ftok, frow in cands:
+                ov = fuzzy_overlap(ptok, ftok)
+                if ov > best_overlap:
+                    best_overlap, best = ov, frow
+            if best_overlap >= 1:
+                chosen = best
+        if chosen is None:                       # fallback: exact full-name match
+            chosen = full_index.get(_norm_name(p.player_name))
+        rec = {"player_id": p.player_id}
+        if chosen is not None:
+            matched += 1
+            for f in fields:
+                rec[f] = getattr(chosen, f)
+        rows.append(rec)
+
+    out = pd.DataFrame(rows)
+    for f in fields:
+        if f not in out.columns:
+            out[f] = np.nan
+    log(f"  FC26 attributes matched to {matched} players (dob + name-token overlap).")
+    return out
 
 
 def engineer(df: pd.DataFrame) -> pd.DataFrame:
@@ -201,14 +359,19 @@ def main():
     # Schema validation: print real columns before building features.
     print_schema(PLAYERS_CSV, "players")
     print_schema(APPEARANCES_CSV, "appearances")
-    if os.path.exists(FIFA_CSV):
-        print_schema(FIFA_CSV, "fifa_players")
+    if os.path.exists(FC26_CSV):
+        print_schema(FC26_CSV, "FC26")
 
     players = load_players(PLAYERS_CSV)
     apps    = load_appearances(APPEARANCES_CSV)
 
     df = players.merge(apps, on="player_id", how="left")
     log(f"Merged dataset: {len(df)} players")
+
+    df = apply_current_stats(df)
+
+    log("Attaching EA FC26 playing-style attributes...")
+    df = df.merge(load_fc26(players), on="player_id", how="left")
 
     df = engineer(df)
     df = fill_by_position_median(df)

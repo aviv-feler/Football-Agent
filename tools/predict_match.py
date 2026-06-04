@@ -35,21 +35,28 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame):
 
         row1 = national_strength.loc[n1]
         row2 = national_strength.loc[n2]
+
+        def pedigree(row) -> str:
+            if bool(row.get("has_history", False)):
+                return (f"WC pedigree Elo {int(row['pedigree_elo'])} "
+                        f"from {int(row['n_wc_matches'])} World Cup matches")
+            return "no World Cup history (squad strength only)"
+
         return (
             f"**World Cup 2026 prediction: {team1} vs {team2}**\n\n"
             f"Likely result: **{winner}** "
             f"(probabilities: {team1} {round(p1*100)}% | draw {round(p_draw*100)}% | {team2} {round(p2*100)}%)\n\n"
-            f"**National-team strength derived from player data:**\n"
+            f"**Hybrid national-team strength (current squad value + World Cup pedigree):**\n"
             f"- {team1}: strength score {round(s1*100,1)} | average squad value EUR {int(row1['squad_value_mean']):,} "
-            f"| player depth {int(row1['depth'])}\n"
+            f"| {pedigree(row1)}\n"
             f"- {team2}: strength score {round(s2*100,1)} | average squad value EUR {int(row2['squad_value_mean']):,} "
-            f"| player depth {int(row2['depth'])}\n\n"
+            f"| {pedigree(row2)}\n\n"
             f"**Reasoning:** "
-            + (f"{team1} has the stronger squad profile and is the favorite." if s1 > s2 + 0.05
-               else f"{team2} has the stronger squad profile and is the favorite." if s2 > s1 + 0.05
+            + (f"{team1} has the stronger combined profile and is the favorite." if s1 > s2 + 0.05
+               else f"{team2} has the stronger combined profile and is the favorite." if s2 > s1 + 0.05
                else "The teams are close, so this projects as a tight match.")
-            + "\n\n🔍 Method: Logistic (softmax) model on squad-strength features "
-              "derived from aggregated player market values."
+            + "\n\n🔍 Method: Logistic (softmax) on a hybrid national-team strength = current "
+              "squad market value blended with walk-forward World Cup Elo pedigree."
         )
 
     @tool

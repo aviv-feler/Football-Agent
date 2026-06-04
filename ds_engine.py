@@ -9,6 +9,7 @@ Methods:
   - Jaccard similarity for categorical trait sets.
 """
 
+import os
 import json
 import numpy as np
 import pandas as pd
@@ -122,6 +123,8 @@ NATION_MAP = {
     "usa": "United States", "korea republic": "Korea, South", "ir iran": "Iran",
     "türkiye": "Turkey", "turkiye": "Turkey", "czechia": "Czech Republic",
     "côte d’ivoire": "Cote d'Ivoire", "cote d'ivoire": "Cote d'Ivoire",
+    "ivory coast": "Cote d'Ivoire", "south korea": "Korea, South",
+    "north korea": "Korea, North",
     "congo dr": "DR Congo", "cabo verde": "Cape Verde", "curaçao": "Curacao",
     "bosnia & herzegovina": "Bosnia-Herzegovina",
 }
@@ -144,8 +147,59 @@ def normalize_nation(name: str, known: set):
     return None
 
 
-def build_national_strength(df: pd.DataFrame, squad: int = 23) -> pd.DataFrame:
-    """National-team strength from the top squad players by market value."""
+NATIONAL_MATCHES_CSV = "data/national_matches.csv"
+
+
+def load_national_matches(path: str = NATIONAL_MATCHES_CSV):
+    """Historical international results (committed CSV built from the WC workbook)."""
+    if not os.path.exists(path):
+        return None
+    m = pd.read_csv(path)
+    m["date"] = pd.to_datetime(m["date"], errors="coerce")
+    return m.sort_values("date").reset_index(drop=True)
+
+
+def compute_elo(matches: pd.DataFrame, k: float = 40.0, base: float = 1500.0):
+    """Walk-forward Elo from historical international results.
+
+    Ratings update chronologically, so a match is always rated using only prior data.
+    Also returns an out-of-sample hit-rate vs the bookmaker favourite on decisive
+    matches that carry odds — a clean validation of the pedigree signal.
+    """
+    elo: dict[str, float] = {}
+    n_matches: dict[str, int] = {}
+    model_correct = book_correct = total = 0
+    for r in matches.itertuples(index=False):
+        h, a = r.home, r.away
+        rh, ra = elo.get(h, base), elo.get(a, base)
+        exp_h = 1.0 / (1.0 + 10 ** ((ra - rh) / 400.0))
+        res = r.result
+        s_h = 1.0 if res == "H" else 0.0 if res == "A" else 0.5
+
+        odds_h, odds_a = getattr(r, "odds_home", None), getattr(r, "odds_away", None)
+        if res in ("H", "A") and pd.notna(odds_h) and pd.notna(odds_a):
+            total += 1
+            if ("H" if rh >= ra else "A") == res:
+                model_correct += 1
+            if ("H" if odds_h <= odds_a else "A") == res:
+                book_correct += 1
+
+        elo[h] = rh + k * (s_h - exp_h)
+        elo[a] = ra + k * ((1.0 - s_h) - (1.0 - exp_h))
+        n_matches[h] = n_matches.get(h, 0) + 1
+        n_matches[a] = n_matches.get(a, 0) + 1
+    return elo, n_matches, (model_correct, book_correct, total)
+
+
+def build_national_strength(df: pd.DataFrame, squad: int = 23,
+                            pedigree_weight: float = 0.35) -> pd.DataFrame:
+    """Hybrid national-team strength: current squad value blended with World Cup
+    Elo pedigree.
+
+    Squad strength (from current player market values) covers every nation, including
+    2026 newcomers. Where historical World Cup results exist, an Elo pedigree term is
+    blended in; teams with no history fall back to squad strength alone.
+    """
     print("[ds_engine] Building national-team strength table...", flush=True)
     rows = []
     for nation, grp in df.groupby("nationality"):
@@ -165,6 +219,39 @@ def build_national_strength(df: pd.DataFrame, squad: int = 23) -> pd.DataFrame:
     vmean = np.log1p(nat["squad_value_mean"]) / np.log1p(nat["squad_value_mean"].max())
     vsum  = np.log1p(nat["squad_value_sum"])  / np.log1p(nat["squad_value_sum"].max())
     depth = np.log1p(nat["depth"]) / np.log1p(nat["depth"].max())
-    nat["strength"] = 0.6 * vmean + 0.25 * vsum + 0.15 * depth
+    nat["squad_strength"] = 0.6 * vmean + 0.25 * vsum + 0.15 * depth
+
+    matches = load_national_matches()
+    if matches is not None and len(matches):
+        elo, n_matches, (mc, bc, tot) = compute_elo(matches)
+        nat["pedigree_elo"] = nat.index.map(lambda x: elo.get(x))
+        nat["n_wc_matches"] = nat.index.map(lambda x: n_matches.get(x, 0)).astype(int)
+        present = nat["pedigree_elo"].dropna()
+        if len(present) > 1:
+            lo, hi = present.min(), present.max()
+            nat["pedigree_norm"] = ((nat["pedigree_elo"] - lo) / (hi - lo)).clip(0, 1)
+        else:
+            nat["pedigree_norm"] = np.nan
+        has = nat["pedigree_elo"].notna()
+        nat["has_history"] = has
+        # Pedigree is a centered adjustment around the squad baseline: strong WC history
+        # is a bonus, weak history a small penalty, and no history is neutral (so teams
+        # without records are never unfairly outranked by mid-pedigree teams). The
+        # combined score is min-max rescaled so the elite stay separated (no saturation).
+        adj = pedigree_weight * (nat["pedigree_norm"] - 0.5)
+        raw = nat["squad_strength"] + adj.fillna(0.0)
+        nat["strength"] = (raw - raw.min()) / (raw.max() - raw.min())
+        if tot:
+            print(f"[ds_engine] Elo walk-forward backtest on {tot} decisive matches with "
+                  f"odds: model {mc/tot:.0%} correct vs bookmaker {bc/tot:.0%}", flush=True)
+        print(f"[ds_engine] Pedigree blended for {int(has.sum())}/{len(nat)} nations "
+              f"(rest use squad strength).", flush=True)
+    else:
+        nat["pedigree_elo"] = np.nan
+        nat["n_wc_matches"] = 0
+        nat["has_history"] = False
+        nat["strength"] = nat["squad_strength"]
+        print("[ds_engine] No historical matches found; using squad strength only.", flush=True)
+
     print(f"[ds_engine] Computed strength for {len(nat)} national teams", flush=True)
     return nat

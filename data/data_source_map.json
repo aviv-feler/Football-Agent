@@ -1,13 +1,12 @@
 {
-  "data_version": "2026-06-03-source-priority-v2",
-  "generated_at": "2026-06-03T20:48:07.592559+00:00",
+  "data_version": "2026-06-04-fbref-current-v3",
+  "generated_at": "2026-06-04T20:51:13.567959+00:00",
   "source_priority": {
     "current_player_rankings": [
       {
         "priority": 1,
-        "file": "data/Football_clubs_players_full.xlsx",
-        "sheet": "players_statistics_final",
-        "reason": "Current/season-style player statistics for ranking questions."
+        "file": "data/players_data-2025_2026.csv",
+        "reason": "Current-season (2025-26) top-5 league player statistics from FBref."
       },
       {
         "priority": 2,
@@ -46,12 +45,19 @@
       {
         "priority": 2,
         "file": "data/player_features.npy",
-        "reason": "Legacy numeric vectors; used only while row-aligned."
+        "reason": "Normalized 16-d player vectors (perf + FC26 style), row-aligned to players_clean.csv."
       },
       {
         "priority": 3,
         "file": "data/feature_meta.json",
-        "reason": "K-Means metadata."
+        "reason": "K-Means + scaler metadata."
+      }
+    ],
+    "player_attributes": [
+      {
+        "priority": 1,
+        "file": "data/FC26_20250921.csv",
+        "reason": "EA FC26 (Sep 2025) playing-style attributes + potential; joined by dob + name tokens."
       }
     ],
     "player_stats": [
@@ -91,8 +97,8 @@
       },
       {
         "priority": 3,
-        "file": "data/club_games.csv",
-        "reason": "Club-side match aggregates fallback."
+        "file": "data/<league folders>/",
+        "reason": "Top-5 league results + odds for the club match-prediction model."
       }
     ],
     "world_cup_schedule": [
@@ -100,6 +106,18 @@
         "priority": 1,
         "file": "data/fwc26_match_schedule_agent.csv",
         "reason": "Local World Cup 2026 schedule."
+      }
+    ],
+    "national_prediction": [
+      {
+        "priority": 1,
+        "file": "data/national_matches.csv",
+        "reason": "Historical World Cup results (2010/2014/2018/2022) for the Elo pedigree term, built from data/WorldCup*.xlsx."
+      },
+      {
+        "priority": 2,
+        "file": "player market values (squad strength)",
+        "reason": "Current squad strength; sole signal for teams without World Cup history."
       }
     ]
   }
