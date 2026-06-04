@@ -2,8 +2,9 @@ services:
   - type: web
     name: scoutai
     env: python
-    # Runtime data artifacts are already included in the repo, so data_prep.py
-    # does not need to run during deployment.
+    # Runtime data artifacts are committed to the repo, so data_prep.py does not
+    # need to run during deployment.
+    # Raw source CSV files are intentionally excluded from the repository.
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:

@@ -65,6 +65,17 @@ FOOTBALL_DATA_API_KEY=...
 `FOOTBALL_DATA_API_KEY` is only needed for live standings. The local player tools and
 World Cup schedule work from the included data files.
 
+### Optional debugging flag
+
+```text
+SCOUTAI_ENABLE_SMART_QA=1
+```
+
+By default, the app routes common football questions directly to deterministic
+data-science tools. The older `football_qa.py` smart intent pipeline is disabled
+unless this flag is enabled, because it can mix ranking logic and make demo
+answers harder to explain.
+
 ## Tool Smoke Test
 
 ```bash

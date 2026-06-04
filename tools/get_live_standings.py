@@ -1,6 +1,5 @@
 """
-tools/get_live_standings.py
-כלי לשליפת טבלאות ותוצאות חיות מ-football-data.org API
+Fetch live standings and fixtures from the football-data.org API.
 """
 
 import os
@@ -9,7 +8,7 @@ from langchain.tools import tool
 
 API_BASE = "https://api.football-data.org/v4"
 
-# מיפוי שמות תחרויות ל-ID ב-API
+# Competition-name mapping for the API.
 COMPETITION_MAP = {
     "premier league":    "PL",
     "la liga":           "PD",
@@ -32,7 +31,7 @@ def _get_headers() -> dict:
 
 
 def make_get_live_standings_tool():
-    """Factory – יוצר את הכלי לשליפת טבלאות חיות."""
+    """Factory for the live standings tool."""
 
     @tool
     def get_live_standings(competition: str) -> str:
@@ -44,8 +43,8 @@ def make_get_live_standings_tool():
         key = os.getenv("FOOTBALL_DATA_API_KEY", "")
         if not key:
             return (
-                "FOOTBALL_DATA_API_KEY לא הוגדר. "
-                "הוסף את המפתח כמשתנה סביבה כדי לקבל נתונים חיים."
+                "FOOTBALL_DATA_API_KEY is not configured. "
+                "Add it as an environment variable to fetch live data."
                 "\n\n🔍 Method: Live standings lookup via football-data.org API."
             )
 
@@ -58,14 +57,14 @@ def make_get_live_standings_tool():
 
         if not comp_id:
             return (
-                f"לא נמצאה תחרות בשם '{competition}'. "
-                f"תחרויות זמינות: {', '.join(COMPETITION_MAP.keys())}"
+                f"Competition '{competition}' was not found. "
+                f"Available competitions: {', '.join(COMPETITION_MAP.keys())}"
                 "\n\n🔍 Method: Live standings lookup via football-data.org API."
             )
 
         headers = _get_headers()
 
-        # נסיון לשלוף טבלה
+        # Try standings first.
         try:
             resp = requests.get(
                 f"{API_BASE}/competitions/{comp_id}/standings",
@@ -85,8 +84,8 @@ def make_get_live_standings_tool():
                     table_data = standings[0].get("table", []) if standings else []
 
                 if table_data:
-                    lines = [f"**טבלת {competition} | עונה: {season_str}**\n",
-                             f"{'#':<3} {'קבוצה':<25} {'מ':<4} {'נ':<4} {'ת':<4} {'ה':<4} {'גבצ':<6} {'נגד':<6} {'נק':<5}"]
+                    lines = [f"**{competition} standings | season: {season_str}**\n",
+                             f"{'#':<3} {'Team':<25} {'P':<4} {'W':<4} {'D':<4} {'L':<4} {'GF':<6} {'GA':<6} {'Pts':<5}"]
                     lines.append("-" * 60)
                     for row in table_data[:20]:
                         pos   = row.get("position", "")
@@ -111,7 +110,7 @@ def make_get_live_standings_tool():
             if resp2.status_code == 200:
                 matches = resp2.json().get("matches", [])
                 if matches:
-                    lines = [f"**משחקים קרובים – {competition}:**\n"]
+                    lines = [f"**Upcoming matches - {competition}:**\n"]
                     for m in matches:
                         date  = m.get("utcDate", "")[:10]
                         home  = m.get("homeTeam", {}).get("name", "?")
@@ -121,13 +120,13 @@ def make_get_live_standings_tool():
                     return "\n".join(lines)
 
             return (
-                f"לא הצלחתי לשלוף נתונים עבור {competition} (קוד: {resp.status_code})."
+                f"Could not fetch data for {competition} (status: {resp.status_code})."
                 "\n\n🔍 Method: Live standings lookup via football-data.org API."
             )
 
         except requests.RequestException as e:
             return (
-                f"שגיאת רשת בעת גישה ל-API: {e}"
+                f"Network error while accessing the API: {e}"
                 "\n\n🔍 Method: Live standings lookup via football-data.org API."
             )
 
