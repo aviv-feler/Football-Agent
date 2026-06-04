@@ -13,10 +13,33 @@ from langchain.tools import tool
 from ds_engine import normalize_nation
 
 
-def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame):
-    """Factory for the match-prediction tool."""
+def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame, club_model=None):
+    """Factory for the match-prediction tool.
+
+    Routes a matchup to the club Poisson model when both teams are known clubs, and to
+    the hybrid national-team model when both are national teams.
+    """
 
     known_nations = set(national_strength.index)
+
+    def _predict_club(team1: str, team2: str) -> str:
+        res = club_model.predict(team1, team2)
+        order = sorted(
+            [(res["home"], res["p_home"]), ("draw", res["p_draw"]), (res["away"], res["p_away"])],
+            key=lambda kv: kv[1], reverse=True,
+        )
+        winner = order[0][0]
+        return (
+            f"**Match prediction: {res['home']} (home) vs {res['away']}**\n\n"
+            f"Likely result: **{winner}** "
+            f"(probabilities: {res['home']} {round(res['p_home']*100)}% | "
+            f"draw {round(res['p_draw']*100)}% | {res['away']} {round(res['p_away']*100)}%)\n\n"
+            f"Expected goals: {res['home']} {res['exp_home']:.2f} - "
+            f"{res['exp_away']:.2f} {res['away']} "
+            f"(most likely score {res['likely_score'][0]}-{res['likely_score'][1]}).\n\n"
+            "🔍 Method: Recency-weighted Poisson goals model (team attack/defence factors "
+            "+ home advantage) trained on 10 seasons of top-5 league results."
+        )
 
     def _predict_from_strength(n1: str, s1: float, n2: str, s2: float,
                                team1: str, team2: str) -> str:
@@ -62,11 +85,17 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame):
     @tool
     def predict_match(team1: str, team2: str) -> str:
         """
-        Predict the outcome of a football match between two teams. For national teams
-        (World Cup) it uses squad strength derived from the player dataset. Returns a
-        winner with probability percentages and reasoning.
+        Predict the outcome of a football match between two teams. Club matchups
+        (top-5 leagues) use a Poisson goals model; national-team matchups (World Cup)
+        use a hybrid squad-strength + World Cup pedigree model. Returns a winner with
+        probability percentages and reasoning.
         Inputs: team1 and team2 (team names).
         """
+        # Club matchup: both teams known to the club model.
+        if club_model is not None and getattr(club_model, "ok", False):
+            if club_model.resolve(team1) and club_model.resolve(team2):
+                return _predict_club(team1, team2)
+
         n1 = normalize_nation(team1, known_nations)
         n2 = normalize_nation(team2, known_nations)
 
@@ -78,9 +107,9 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame):
         missing = [t for t, n in [(team1, n1), (team2, n2)] if n is None]
         return (
             f"I could not build a data-based prediction for: {', '.join(missing)}. "
-            "This predictor currently supports national teams that appear in the player dataset. "
-            "Try full national-team names such as Brazil, France, or Argentina."
-            "\n\n🔍 Method: Squad-strength lookup from aggregated player market values."
+            "This predictor covers top-5 league clubs (e.g. Man City, Real Madrid) and "
+            "national teams in the player dataset (e.g. Brazil, France). Try full team names."
+            "\n\n🔍 Method: Poisson club model / hybrid national squad-strength + WC pedigree."
         )
 
     return predict_match

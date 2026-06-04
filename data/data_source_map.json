@@ -1,6 +1,6 @@
 {
   "data_version": "2026-06-04-fbref-current-v3",
-  "generated_at": "2026-06-04T20:51:13.567959+00:00",
+  "generated_at": "2026-06-04T20:59:40.875896+00:00",
   "source_priority": {
     "current_player_rankings": [
       {
@@ -118,6 +118,13 @@
         "priority": 2,
         "file": "player market values (squad strength)",
         "reason": "Current squad strength; sole signal for teams without World Cup history."
+      }
+    ],
+    "club_prediction": [
+      {
+        "priority": 1,
+        "file": "data/club_matches.csv",
+        "reason": "Top-5 league results (10 seasons) for the recency-weighted Poisson club model, built from data/<league folders>/."
       }
     ]
   }

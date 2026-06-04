@@ -112,6 +112,9 @@ SOURCE_PRIORITY: dict[str, Any] = {
         {"priority": 1, "file": "data/national_matches.csv", "reason": "Historical World Cup results (2010/2014/2018/2022) for the Elo pedigree term, built from data/WorldCup*.xlsx."},
         {"priority": 2, "file": "player market values (squad strength)", "reason": "Current squad strength; sole signal for teams without World Cup history."},
     ],
+    "club_prediction": [
+        {"priority": 1, "file": "data/club_matches.csv", "reason": "Top-5 league results (10 seasons) for the recency-weighted Poisson club model, built from data/<league folders>/."},
+    ],
 }
 
 

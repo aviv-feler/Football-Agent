@@ -25,6 +25,7 @@ from tools.compare_players_jaccard import make_compare_players_jaccard_tool
 from tools.predict_match import make_predict_match_tool
 from tools.get_live_standings import make_get_live_standings_tool
 from tools.world_cup import make_world_cup_tool
+from club_model import ClubModel
 from football_qa import FootballQAPipeline
 
 DATA_CSV     = "data/players_clean.csv"
@@ -390,13 +391,19 @@ def build_agent(engine, national_strength, schedule):
                 wc_nations.add(mapped)
         print(f"[agent] World Cup: mapped {len(wc_nations)} teams to data nationalities.", flush=True)
 
+    club_model = ClubModel()
+    if club_model.ok:
+        print(f"[agent] Club model ready: {len(club_model.factors)} clubs.", flush=True)
+    else:
+        print("[agent] Club model unavailable (data/club_matches.csv missing).", flush=True)
+
     tools = [
         make_find_similar_players_tool(engine),
         make_scout_players_tool(engine, wc_nations),
         make_get_player_archetype_tool(engine),
         make_detect_anomalies_tool(engine),
         make_compare_players_jaccard_tool(engine),
-        make_predict_match_tool(engine.df, national_strength),
+        make_predict_match_tool(engine.df, national_strength, club_model),
         make_get_live_standings_tool(),
         make_world_cup_tool(schedule),
     ]
