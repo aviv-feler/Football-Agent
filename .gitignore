@@ -22,3 +22,4 @@ data/*
 !data/data_source_map.json
 !data/national_matches.csv
 !data/club_matches.csv
+data.zip
