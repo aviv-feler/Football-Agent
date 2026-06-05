@@ -263,6 +263,9 @@
   .vs-line { display: flex; align-items: center; justify-content: center; gap: 12px; font-family: var(--font-disp); font-weight: 700; font-size: 1.45rem; margin: 2px 0 12px; }
   .vs-line .score { font-family: var(--font-mono); color: #fff; }
   .vs-line .vs { font-size: .8rem; color: var(--text-dim); font-weight: 500; }
+  .flag { width: 30px; height: 22px; border-radius: 4px; object-fit: cover; display: inline-block; vertical-align: middle; box-shadow: 0 2px 7px rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.12); }
+  .flag-unknown { width: 30px; height: 22px; border-radius: 4px; display: inline-block; vertical-align: middle; background: var(--glass-2); border: 1px solid var(--border); }
+  .flag-slot { display: inline-flex; align-items: center; }
 
   /* Badges */
   .badge { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: .74rem; font-weight: 600; padding: 4px 10px; border-radius: 20px; border: 1px solid; }
@@ -566,11 +569,11 @@
                   <div><div class="card-kicker" id="wc-kicker">World Cup 2026</div><div class="card-title" id="wc-title">Loading fixture…</div></div>
                 </div>
                 <div class="vs-line" id="wc-vs">
-                  <span id="wc-flag-home" style="font-size:1.5rem">🌍</span>
+                  <span id="wc-flag-home" class="flag-slot"><span class="flag-unknown"></span></span>
                   <span class="score" id="wc-score-h">–</span>
                   <span class="vs">PRED</span>
                   <span class="score" id="wc-score-a">–</span>
-                  <span id="wc-flag-away" style="font-size:1.5rem">🌍</span>
+                  <span id="wc-flag-away" class="flag-slot"><span class="flag-unknown"></span></span>
                 </div>
                 <div class="card-row"><span class="k">Predicted winner</span><span class="v" id="wc-winner">–</span></div>
                 <div class="card-row"><span class="k">Win probability</span><span class="v" id="wc-conf">–</span></div>
@@ -858,20 +861,35 @@
   window.addEventListener('load', () => input.focus());
 
   /* ── WC featured match widget ─────────────────────────────────────────── */
-  const FLAG_EMOJI = {
-    "Brazil":"🇧🇷","France":"🇫🇷","Argentina":"🇦🇷","Germany":"🇩🇪","England":"🏴󠁧󠁢󠁥󠁮󠁧󠁿",
-    "Spain":"🇪🇸","Netherlands":"🇳🇱","Portugal":"🇵🇹","Belgium":"🇧🇪","Croatia":"🇭🇷",
-    "Morocco":"🇲🇦","Senegal":"🇸🇳","USA":"🇺🇸","Mexico":"🇲🇽","Canada":"🇨🇦",
-    "Uruguay":"🇺🇾","Colombia":"🇨🇴","Japan":"🇯🇵","Korea Republic":"🇰🇷","Australia":"🇦🇺",
-    "Switzerland":"🇨🇭","Ecuador":"🇪🇨","Tunisia":"🇹🇳","Ghana":"🇬🇭","Cameroon":"🇨🇲",
-    "Nigeria":"🇳🇬","Egypt":"🇪🇬","Saudi Arabia":"🇸🇦","Iran":"🇮🇷","Qatar":"🇶🇦",
-    "Scotland":"🏴󠁧󠁢󠁳󠁣󠁴󠁿","Norway":"🇳🇴","Sweden":"🇸🇪","Austria":"🇦🇹","Poland":"🇵🇱",
-    "Turkey":"🇹🇷","Türkiye":"🇹🇷","Haiti":"🇭🇹","Iraq":"🇮🇶","Jordan":"🇯🇴",
-    "Paraguay":"🇵🇾","Bolivia":"🇧🇴","Algeria":"🇩🇿","South Africa":"🇿🇦",
-    "Czechia":"🇨🇿","New Zealand":"🇳🇿","Congo DR":"🇨🇩","Curaçao":"🇨🇼",
-    "Cabo Verde":"🇨🇻","Uzbekistan":"🇺🇿","Panama":"🇵🇦","Bosnia & Herzegovina":"🇧🇦",
+  /* Country name -> ISO 3166-1 code for flagcdn.com (real images: render on every
+     OS, unlike flag emoji which are blank on Windows). gb-eng/gb-sct/gb-wls are
+     flagcdn's home-nation codes. */
+  const FLAG_CODE = {
+    "Brazil":"br","France":"fr","Argentina":"ar","Germany":"de","England":"gb-eng",
+    "Spain":"es","Netherlands":"nl","Portugal":"pt","Belgium":"be","Croatia":"hr",
+    "Morocco":"ma","Senegal":"sn","USA":"us","Mexico":"mx","Canada":"ca",
+    "Uruguay":"uy","Colombia":"co","Japan":"jp","Korea Republic":"kr","Australia":"au",
+    "Switzerland":"ch","Ecuador":"ec","Tunisia":"tn","Ghana":"gh","Cameroon":"cm",
+    "Nigeria":"ng","Egypt":"eg","Saudi Arabia":"sa","Iran":"ir","Qatar":"qa",
+    "Scotland":"gb-sct","Wales":"gb-wls","Norway":"no","Sweden":"se","Austria":"at","Poland":"pl",
+    "Turkey":"tr","Türkiye":"tr","Haiti":"ht","Iraq":"iq","Jordan":"jo",
+    "Paraguay":"py","Bolivia":"bo","Algeria":"dz","South Africa":"za",
+    "Czechia":"cz","New Zealand":"nz","Congo DR":"cd","Curaçao":"cw",
+    "Cabo Verde":"cv","Uzbekistan":"uz","Panama":"pa","Bosnia & Herzegovina":"ba",
   };
-  function getFlag(name) { return FLAG_EMOJI[name] || '🏳️'; }
+  /** Return flag markup for a country. Uses a backend-provided image URL if given,
+      otherwise a flagcdn image by name; falls back to a neutral slot if unknown. */
+  function getFlag(name, provided) {
+    if (provided && /^https?:\/\//.test(provided)) {
+      return `<img class="flag" src="${provided}" width="30" height="22" alt="${name} flag" loading="lazy">`;
+    }
+    const code = FLAG_CODE[name];
+    if (!code) return '<span class="flag-unknown" aria-hidden="true"></span>';
+    return `<img class="flag" src="https://flagcdn.com/w40/${code}.png" `
+         + `srcset="https://flagcdn.com/w80/${code}.png 2x" width="30" height="22" `
+         + `alt="${name} flag" loading="lazy" `
+         + `onerror="this.outerHTML='&lt;span class=\\'flag-unknown\\'&gt;&lt;/span&gt;'">`;
+  }
 
   (async function loadWCMatch() {
     try {
@@ -880,8 +898,8 @@
       const d = await r.json();
       document.getElementById('wc-kicker').textContent = d.group ? `World Cup 2026 · Group ${d.group}` : 'World Cup 2026';
       document.getElementById('wc-title').textContent = `${d.home} vs ${d.away}`;
-      document.getElementById('wc-flag-home').textContent = d.flag_home || getFlag(d.home);
-      document.getElementById('wc-flag-away').textContent = d.flag_away || getFlag(d.away);
+      document.getElementById('wc-flag-home').innerHTML = getFlag(d.home, d.flag_home);
+      document.getElementById('wc-flag-away').innerHTML = getFlag(d.away, d.flag_away);
       const s = d.score.split('–');
       document.getElementById('wc-score-h').textContent = s[0] || '?';
       document.getElementById('wc-score-a').textContent = s[1] || '?';
