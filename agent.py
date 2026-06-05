@@ -24,11 +24,13 @@ from tools.detect_anomalies import make_detect_anomalies_tool
 from tools.compare_players_jaccard import make_compare_players_jaccard_tool
 from tools.predict_match import make_predict_match_tool
 from tools.predict_score import make_prediction_tools
+from tools.wc_prediction_tools import make_wc_prediction_tools
 from tools.get_live_standings import make_get_live_standings_tool
 from tools.get_top_scorers import make_get_top_scorers_tool
 from tools.world_cup import make_world_cup_tool
 from club_model import ClubModel
 from prediction_engine import PredictionEngine, parse_prediction_query
+from wc_predictor import WCPredictor
 
 DATA_CSV     = "data/players_clean.csv"
 WC_CSV       = "data/fwc26_match_schedule_agent.csv"
@@ -59,7 +61,13 @@ HARD RULES:
        → CLUB vs CLUB scoreline. RF classifier + GB xG model + context-aware Poisson scoreline.
          Always resolve which team is home before calling. Pass the raw user sentence as user_context.
    - predict_match(team1, team2)
-       → NATIONAL TEAM / World Cup result. Hybrid squad-strength + WC Elo pedigree.
+       → NATIONAL TEAM result (squad-strength + WC Elo).
+   - predict_wc_match(team_a, team_b)
+       → Specific WC 2026 match: scoreline + probabilities on neutral ground.
+   - predict_wc_group(group)
+       → Full Group A–L standings simulation + who qualifies.
+   - predict_wc_winner()
+       → Full tournament Monte Carlo (10k sims) → win probabilities for all 48 teams.
    - predict_top_scorer(league, n)
        → Who will be top scorer next season? RF regressor on player attributes.
    - predict_player_goals(player_name)
@@ -455,11 +463,17 @@ def build_agent(engine, national_strength, schedule):
         print("[agent] Club model unavailable (data/club_matches.csv missing).", flush=True)
 
     pred_engine = PredictionEngine()
+    wc_pred = WCPredictor(schedule, national_strength)
+    print(f"[agent] WC predictor ready: {len(wc_pred.all_teams)} teams, {len(wc_pred.groups)} groups.", flush=True)
+    print("[agent] Pre-computing WC tournament simulation (5k sims)...", flush=True)
+    wc_pred.warm_up()
+    print("[agent] WC simulation cached.", flush=True)
     scout = ScoutingEngine(engine)
     print(f"[agent] Scouting engine ready: {len(scout.pool)} players with real attributes.", flush=True)
 
     tools = [
         *make_prediction_tools(pred_engine),
+        *make_wc_prediction_tools(wc_pred),
         *make_scouting_tools(scout),
         make_get_player_archetype_tool(engine),
         make_detect_anomalies_tool(engine),
