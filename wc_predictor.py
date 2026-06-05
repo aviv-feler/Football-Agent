@@ -484,7 +484,7 @@ def format_group_prediction(result: dict) -> str:
     for m in result["match_predictions"]:
         lines.append(f"• {m['match']}: **{m['predicted']}** ({m['p_a']} / {m['p_draw']} / {m['p_b']})")
     lines.append(f"\n_{result['note']}_")
-    lines.append("\n🔍 Method: Neutral-ground match probabilities from hybrid squad-value + historical tournament ratings."
+    lines.append("\n🔍 Method: Neutral-ground match probabilities from hybrid squad-value + historical tournament ratings. "
                  "Group standings from expected-value simulation of all 6 group matches.")
     return "\n".join(lines)
 
@@ -533,7 +533,7 @@ def format_wc_match(result: dict) -> str:
         f"Expected goals: {a} {result['xg_a']} — {b} {result['xg_b']}",
         f"Team strength: {a} {result['strength_a']} vs {b} {result['strength_b']} (scale 0–1)",
         "",
-        f"🔍 Method: Logistic Regression on hybrid squad-value + historical WC tournament ratings."
+        f"🔍 Method: Logistic Regression on hybrid squad-value + historical WC tournament ratings. "
         f"Scoreline from context-aware Poisson distribution (match profile: {result['profile'].replace('_',' ')})."
     ]
     return "\n".join(lines)
