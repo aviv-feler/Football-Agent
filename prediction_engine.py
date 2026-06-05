@@ -672,31 +672,38 @@ class PredictionEngine:
     def __init__(self, club_matches_path=CLUB_MATCHES_CSV,
                  national_matches_path=NATIONAL_MATCHES_CSV,
                  players_path=PLAYERS_CSV):
+        # Load data immediately (fast — just CSV reads).
         print("[prediction] Loading match and player data...", flush=True)
         self.matches = self._load_matches(club_matches_path)
         self.nat_matches = self._load_national(national_matches_path)
         self.players = pd.read_csv(players_path, low_memory=False)
         self.known_clubs = set(self.matches["home"].dropna()) | set(self.matches["away"].dropna())
-
-        print("[prediction] Computing Elo ratings...", flush=True)
         self.club_elo = calculate_elo_ratings(self.matches)
-
-        print("[prediction] Building team strength from player data...", flush=True)
         self.strength_df = calculate_player_based_team_strength(self.players)
+        print("[prediction] Data loaded (models will train on first prediction call).", flush=True)
 
-        print("[prediction] Building training data & training models...", flush=True)
+        # Models are trained lazily on the first prediction call so startup is fast.
+        self._models_ready = False
+        self.feature_cols = _RESULT_COLS
+        self.result_model = self.result_le = None
+        self.goal_model_h = self.goal_model_a = None
+        self.player_feat_df = None
+        self.scorer_model = self.scorer_cols = None
+
+    def _ensure_models(self):
+        """Train all models on the first call. Subsequent calls are instant."""
+        if self._models_ready:
+            return
+        print("[prediction] Training match models (first prediction — please wait ~80s)...", flush=True)
         X, y_res, y_hg, y_ag = _build_training_data(self.matches, True, self.strength_df)
-        self.feature_cols = _RESULT_COLS  # kept for reference (model trained on positional vecs)
         self.result_model, self.result_le = train_match_result_model(X, y_res)
         self.goal_model_h, self.goal_model_a = train_goal_model(X, y_hg, y_ag)
-
-        print("[prediction] Training top-scorer model...", flush=True)
         self.player_feat_df = build_player_season_features(self.players, self.strength_df)
         self.scorer_model, self.scorer_cols = train_top_scorer_model(self.player_feat_df)
         self.player_feat_df["projected_goals"] = self.scorer_model.predict(
             self.player_feat_df[self.scorer_cols].values)
-
-        print(f"[prediction] Ready: {len(X)} training matches, {len(self.player_feat_df)} attacker profiles.", flush=True)
+        self._models_ready = True
+        print(f"[prediction] Models ready ({len(X)} training matches).", flush=True)
 
     @staticmethod
     def _load_matches(path):
@@ -722,6 +729,7 @@ class PredictionEngine:
     # ── match prediction ────────────────────────────────────────────────────
     def predict_club_match(self, team_a: str, team_b: str,
                             user_text: str = "") -> dict:
+        self._ensure_models()
         ctx = resolve_home_away(team_a, team_b, user_text, self.matches)
         home, away = ctx["home_team"], ctx["away_team"]
         asof = pd.Timestamp.now()
@@ -800,6 +808,7 @@ class PredictionEngine:
 
     # ── top scorer ──────────────────────────────────────────────────────────
     def predict_top_scorer(self, league: str = "", n: int = 5) -> dict:
+        self._ensure_models()
         df = self.player_feat_df.copy()
         if league:
             # Map league name to league code
@@ -825,6 +834,7 @@ class PredictionEngine:
 
     # ── player goals ────────────────────────────────────────────────────────
     def predict_player_goals(self, player_name: str) -> dict:
+        self._ensure_models()
         from ds_engine import DSEngine  # use existing fuzzy lookup
         df = self.player_feat_df
         q = player_name.strip().lower()

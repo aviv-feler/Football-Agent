@@ -292,8 +292,8 @@ class WCPredictor:
         return self._winner_cache
 
     def warm_up(self) -> None:
-        """Pre-compute the tournament simulation at startup so the first call is instant."""
-        self.predict_wc_winner(5_000)
+        """No-op — simulation is now computed lazily on the first call."""
+        pass
 
 
 # ── response formatters ──────────────────────────────────────────────────────
