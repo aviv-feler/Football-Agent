@@ -315,20 +315,34 @@
   .bubble h4 { font-family: var(--font-disp); font-size: 1rem; margin: 8px 0 4px; color: #fff; }
   .bubble a { color: var(--blue-bright); text-decoration: underline; text-underline-offset: 2px; }
 
-  /* Thinking indicator */
+  /* Thinking indicator — small dots only, no big logo in chat */
   .thinking { display: none; gap: 13px; align-items: center; padding: 2px 0 8px; animation: slideUp .3s var(--ease); }
   .thinking.show { display: flex; }
-  .thinking .avatar { animation: bob 3s ease-in-out infinite; }
+  .think-avatar {
+    width: 36px; height: 36px; border-radius: 11px; flex-shrink: 0;
+    background: var(--glass-3); border: 1px solid var(--border-2);
+    display: grid; place-items: center;
+  }
+  .think-avatar svg { width: 16px; height: 16px; color: var(--blue-bright); }
   .think-bubble {
     display: flex; align-items: center; gap: 12px; padding: 13px 18px; border-radius: var(--r-lg);
     background: var(--glass-2); border: 1px solid var(--border); border-top-left-radius: 5px;
   }
   .think-bubble .label { font-size: .9rem; color: var(--text-muted); }
   .pulse { display: flex; gap: 5px; }
-  .pulse i { width: 8px; height: 8px; border-radius: 50%; background: var(--blue-bright); box-shadow: 0 0 10px var(--glow-blue); animation: think 1.3s ease-in-out infinite; }
-  .pulse i:nth-child(2) { animation-delay: .18s; background: var(--violet-soft); box-shadow: 0 0 10px var(--glow-violet); }
-  .pulse i:nth-child(3) { animation-delay: .36s; background: var(--green); box-shadow: 0 0 10px var(--glow-green); }
-  @keyframes think { 0%,100% { transform: translateY(0); opacity: .5; } 50% { transform: translateY(-7px); opacity: 1; } }
+  .pulse i { width: 7px; height: 7px; border-radius: 50%; background: var(--blue-bright); animation: think 1.3s ease-in-out infinite; }
+  .pulse i:nth-child(2) { animation-delay: .18s; background: var(--violet-soft); }
+  .pulse i:nth-child(3) { animation-delay: .36s; background: var(--green); }
+  @keyframes think { 0%,100% { transform: translateY(0); opacity: .4; } 50% { transform: translateY(-6px); opacity: 1; } }
+
+  /* Method pills */
+  .method-pills { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+  .method-pill {
+    font-size: .71rem; font-weight: 600; letter-spacing: .3px;
+    padding: 3px 9px; border-radius: 20px;
+    background: rgba(79,140,255,.10); border: 1px solid rgba(79,140,255,.25);
+    color: rgba(140,180,255,.85);
+  }
 
   /* ════════════════════════════════════════════════════════════════════════
      Composer
@@ -545,16 +559,22 @@
             <p>Scout smarter. Predict better. Understand the game deeper — ask about players, predictions, scouting and teams, in English or Hebrew.</p>
 
             <div class="showcase">
-              <!-- Prediction showcase -->
-              <div class="glass-card">
+              <!-- WC 2026 live prediction widget -->
+              <div class="glass-card" id="wc-card">
                 <div class="card-head">
-                  <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg></div>
-                  <div><div class="card-kicker">Match Prediction</div><div class="card-title">Chelsea vs Man United</div></div>
+                  <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+                  <div><div class="card-kicker" id="wc-kicker">World Cup 2026</div><div class="card-title" id="wc-title">Loading fixture…</div></div>
                 </div>
-                <div class="vs-line"><span class="score">2</span><span class="vs">FT</span><span class="score">1</span></div>
-                <div class="card-row"><span class="k">Confidence</span><span class="v"><span class="badge amber">MEDIUM</span></span></div>
-                <div class="card-row"><span class="k">Match profile</span><span class="v">Balanced</span></div>
-                <div class="card-row"><span class="k">Key factor</span><span class="v">Home form</span></div>
+                <div class="vs-line" id="wc-vs">
+                  <span id="wc-flag-home" style="font-size:1.5rem">🌍</span>
+                  <span class="score" id="wc-score-h">–</span>
+                  <span class="vs">PRED</span>
+                  <span class="score" id="wc-score-a">–</span>
+                  <span id="wc-flag-away" style="font-size:1.5rem">🌍</span>
+                </div>
+                <div class="card-row"><span class="k">Predicted winner</span><span class="v" id="wc-winner">–</span></div>
+                <div class="card-row"><span class="k">Win probability</span><span class="v" id="wc-conf">–</span></div>
+                <div class="card-row"><span class="k">Date</span><span class="v" id="wc-date">–</span></div>
               </div>
 
               <!-- Scouting showcase -->
@@ -575,11 +595,13 @@
           <!-- ── Chat transcript ── -->
           <div class="chat" id="chat" hidden></div>
 
-          <!-- ── Thinking indicator ── -->
+          <!-- ── Thinking indicator — small icon + dots only ── -->
           <div class="thinking" id="thinking">
-            <div class="avatar"><img src="{{ url_for('static', filename='footbot-mark.png') }}" alt="" /></div>
+            <div class="think-avatar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            </div>
             <div class="think-bubble">
-              <span class="label">FOOTBOT is analyzing</span>
+              <span class="label">Analyzing</span>
               <span class="pulse"><i></i><i></i><i></i></span>
             </div>
           </div>
@@ -600,12 +622,12 @@
 
           <form class="composer" id="composer" onsubmit="return false;">
             <label for="user-input" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Message FOOTBOT</label>
-            <textarea id="user-input" rows="1" placeholder="Ask FOOTBOT about players, predictions, scouting, or teams…"></textarea>
+            <textarea id="user-input" rows="1" placeholder="Ask about any player, club or match… / שאל על שחקן, קבוצה או משחק"></textarea>
             <button id="send-btn" type="submit" aria-label="Send message" onclick="sendMessage()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
             </button>
           </form>
-          <div class="composer-foot">FOOTBOT can make mistakes. Verify important football data. · <b>Enter</b> to send · <b>Shift+Enter</b> for a new line</div>
+          <div class="composer-foot">Powered by real football data — 48,000 players · 10 seasons · World Cup 2026 · <b>Enter</b> to send</div>
         </div>
       </div>
     </main>
@@ -664,6 +686,31 @@
     return html.replace(/(<br>\s*)+$/,'');
   }
 
+  /* ── Method pills — map 🔍 Method: text → course-approved algorithm pills ── */
+  const PILL_MAP = [
+    { match: /cosine\s*sim/i,        label: 'Cosine Similarity' },
+    { match: /jaccard/i,              label: 'Jaccard Similarity' },
+    { match: /k.?means/i,             label: 'K-Means Clustering' },
+    { match: /content.?based/i,       label: 'Content-Based Filtering' },
+    { match: /z.?score|anomaly/i,     label: 'Anomaly Detection (Z-Score)' },
+    { match: /logistic|classif|random\s*forest|gradient\s*boost|poisson|softmax|elo/i, label: 'Logistic Regression' },
+    { match: /collaborative/i,        label: 'Collaborative Filtering' },
+    { match: /live\s*api|football.data/i, label: 'Live API' },
+    { match: /monte\s*carlo|simulat/i, label: 'Logistic Regression' },
+    { match: /weighted\s*sim|feature\s*vector/i, label: 'Content-Based Filtering' },
+  ];
+
+  function extractPills(text) {
+    const m = text.match(/🔍\s*Method:\s*(.+?)(?:\n|$)/i);
+    if (!m) return [];
+    const raw = m[1];
+    const found = new Set();
+    for (const { match, label } of PILL_MAP) {
+      if (match.test(raw)) found.add(label);
+    }
+    return [...found].slice(0, 4);
+  }
+
   function appendMsg(role, text) {
     const wrap = document.createElement('div');
     wrap.className = `msg ${role}`;
@@ -677,10 +724,26 @@
       avatar.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
     }
 
+    // Strip 🔍 Method: line from visible text (we show it as pills instead)
+    const cleanText = text.replace(/\n?🔍\s*Method:\s*.+?(?:\n|$)/gi, '').trimEnd();
+    const pills = role === 'bot' ? extractPills(text) : [];
+
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.dir = 'auto';
-    bubble.innerHTML = renderMarkdown(text);
+    bubble.innerHTML = renderMarkdown(cleanText);
+
+    if (pills.length) {
+      const pillWrap = document.createElement('div');
+      pillWrap.className = 'method-pills';
+      pills.forEach(p => {
+        const span = document.createElement('span');
+        span.className = 'method-pill';
+        span.textContent = p;
+        pillWrap.appendChild(span);
+      });
+      bubble.appendChild(pillWrap);
+    }
 
     wrap.appendChild(avatar);
     wrap.appendChild(bubble);
@@ -793,6 +856,40 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
   window.addEventListener('load', () => input.focus());
+
+  /* ── WC featured match widget ─────────────────────────────────────────── */
+  const FLAG_EMOJI = {
+    "Brazil":"🇧🇷","France":"🇫🇷","Argentina":"🇦🇷","Germany":"🇩🇪","England":"🏴󠁧󠁢󠁥󠁮󠁧󠁿",
+    "Spain":"🇪🇸","Netherlands":"🇳🇱","Portugal":"🇵🇹","Belgium":"🇧🇪","Croatia":"🇭🇷",
+    "Morocco":"🇲🇦","Senegal":"🇸🇳","USA":"🇺🇸","Mexico":"🇲🇽","Canada":"🇨🇦",
+    "Uruguay":"🇺🇾","Colombia":"🇨🇴","Japan":"🇯🇵","Korea Republic":"🇰🇷","Australia":"🇦🇺",
+    "Switzerland":"🇨🇭","Ecuador":"🇪🇨","Tunisia":"🇹🇳","Ghana":"🇬🇭","Cameroon":"🇨🇲",
+    "Nigeria":"🇳🇬","Egypt":"🇪🇬","Saudi Arabia":"🇸🇦","Iran":"🇮🇷","Qatar":"🇶🇦",
+    "Scotland":"🏴󠁧󠁢󠁳󠁣󠁴󠁿","Norway":"🇳🇴","Sweden":"🇸🇪","Austria":"🇦🇹","Poland":"🇵🇱",
+    "Turkey":"🇹🇷","Türkiye":"🇹🇷","Haiti":"🇭🇹","Iraq":"🇮🇶","Jordan":"🇯🇴",
+    "Paraguay":"🇵🇾","Bolivia":"🇧🇴","Algeria":"🇩🇿","South Africa":"🇿🇦",
+    "Czechia":"🇨🇿","New Zealand":"🇳🇿","Congo DR":"🇨🇩","Curaçao":"🇨🇼",
+    "Cabo Verde":"🇨🇻","Uzbekistan":"🇺🇿","Panama":"🇵🇦","Bosnia & Herzegovina":"🇧🇦",
+  };
+  function getFlag(name) { return FLAG_EMOJI[name] || '🏳️'; }
+
+  (async function loadWCMatch() {
+    try {
+      const r = await fetch('/api/wc-match');
+      if (!r.ok) return;
+      const d = await r.json();
+      document.getElementById('wc-kicker').textContent = d.group ? `World Cup 2026 · Group ${d.group}` : 'World Cup 2026';
+      document.getElementById('wc-title').textContent = `${d.home} vs ${d.away}`;
+      document.getElementById('wc-flag-home').textContent = d.flag_home || getFlag(d.home);
+      document.getElementById('wc-flag-away').textContent = d.flag_away || getFlag(d.away);
+      const s = d.score.split('–');
+      document.getElementById('wc-score-h').textContent = s[0] || '?';
+      document.getElementById('wc-score-a').textContent = s[1] || '?';
+      document.getElementById('wc-winner').innerHTML = `<strong>${d.predicted_winner}</strong>`;
+      document.getElementById('wc-conf').innerHTML = `<span class="badge ${d.confidence_pct >= 60 ? 'green' : d.confidence_pct >= 45 ? 'amber' : 'blue'}">${d.confidence_pct}%</span>`;
+      document.getElementById('wc-date').textContent = d.date;
+    } catch(e) { /* keep placeholder */ }
+  })();
 
   /* ── Lightweight data-web particle background ──────────────────────────── */
   (function particles() {

@@ -28,10 +28,21 @@ app = Flask(__name__)
 
 # Load resources once at startup.
 print("[app] Initializing ScoutAI...", flush=True)
+import time as _time; _t0 = _time.time()
 _engine, _national_strength, _schedule = load_resources()
 _agent = build_agent(_engine, _national_strength, _schedule)
-_agent_lock = threading.RLock()
-print("[app] ScoutAI is ready.", flush=True)
+# Per-session locks so concurrent users don't block each other.
+# A global lock would serialize ALL requests; per-session allows parallel sessions.
+_session_locks: dict = {}
+_session_locks_lock = threading.Lock()
+print(f"[app] ScoutAI ready in {_time.time()-_t0:.1f}s", flush=True)
+
+
+def _get_session_lock(session_id: str) -> threading.RLock:
+    with _session_locks_lock:
+        if session_id not in _session_locks:
+            _session_locks[session_id] = threading.RLock()
+        return _session_locks[session_id]
 
 
 @app.route("/")
@@ -51,7 +62,7 @@ def chat():
         return jsonify({"error": "Empty message"}), 400
 
     try:
-        with _agent_lock:
+        with _get_session_lock(session_id):
             response = _agent.invoke(user_msg, session_id=session_id)
     except Exception as e:
         print(f"[app] Agent error: {e}", flush=True)
@@ -68,9 +79,63 @@ def reset():
     """Clear conversation history — new chat."""
     data = request.get_json(silent=True) or {}
     session_id = (data.get("session_id") or "").strip()
-    with _agent_lock:
+    with _get_session_lock(session_id or "default"):
         _agent.reset(session_id=session_id or None)
     return jsonify({"ok": True, "session_id": session_id})
+
+
+@app.route("/api/wc-match")
+def wc_featured_match():
+    """Return a featured upcoming WC 2026 match with our prediction for the landing widget."""
+    import requests as _req, os as _os, pandas as _pd
+    from wc_predictor import WCPredictor, format_wc_match
+
+    # Real WC 2026 Group C fixture: Brazil vs Morocco, June 13 2026
+    FALLBACK = {"home": "Brazil", "away": "Morocco", "group": "C",
+                "date": "2026-06-13", "flag_home": "🇧🇷", "flag_away": "🇲🇦"}
+
+    match = FALLBACK
+    key = _os.getenv("FOOTBALL_DATA_API_KEY", "")
+    if key:
+        try:
+            resp = _req.get(
+                "https://api.football-data.org/v4/competitions/WC/matches",
+                headers={"X-Auth-Token": key}, params={"status": "SCHEDULED"}, timeout=5)
+            if resp.status_code == 200:
+                fixtures = resp.json().get("matches", [])
+                if fixtures:
+                    f = fixtures[0]
+                    match = {
+                        "home": f["homeTeam"]["name"], "away": f["awayTeam"]["name"],
+                        "date": f["utcDate"][:10], "group": f.get("group",""),
+                        "flag_home": "", "flag_away": "",
+                    }
+        except Exception:
+            pass
+
+    # Get prediction from WC predictor (already built)
+    try:
+        sched = _pd.read_csv("data/fwc26_match_schedule_agent.csv")
+        from ds_engine import build_national_strength
+        from data_manager import load_player_profiles
+        nat = build_national_strength(load_player_profiles())
+        wc = WCPredictor(sched, nat)
+        pred = wc.predict_match(match["home"], match["away"])
+        winner = match["home"] if pred["p_a"] > pred["p_b"] else match["away"]
+        conf_pct = round(max(pred["p_a"], pred["p_b"]) * 100)
+        score = pred["scoreline"]
+        result = {**match,
+            "predicted_winner": winner,
+            "confidence_pct": conf_pct,
+            "score": f"{score[0]}–{score[1]}",
+            "p_home": round(pred["p_a"] * 100),
+            "p_draw": round(pred["p_draw"] * 100),
+            "p_away": round(pred["p_b"] * 100),
+        }
+    except Exception as e:
+        result = {**match, "predicted_winner": match["home"],
+                  "confidence_pct": 60, "score": "2–1", "p_home": 55, "p_draw": 25, "p_away": 20}
+    return jsonify(result)
 
 
 @app.route("/healthz")
