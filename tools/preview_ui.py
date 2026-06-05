@@ -13,6 +13,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 app = Flask(__name__,
             template_folder=os.path.join(ROOT, "templates"),
             static_folder=os.path.join(ROOT, "static"))
+# Hot-reload the template on every request so UI edits show on a simple refresh.
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
+
+
+@app.route("/api/wc-match")
+def wc_match():
+    """Mock of the real endpoint so the WC widget (and flags) render in preview."""
+    return jsonify({
+        "home": "Mexico", "away": "South Africa", "group": "A",
+        "score": "1–1", "predicted_winner": "Mexico", "confidence_pct": 49,
+        "date": "2026-06-11", "flag_home": "", "flag_away": "",
+    })
 
 
 @app.route("/")
