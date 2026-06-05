@@ -4,10 +4,10 @@ LLM extracts intent + entities → engine simulates → LLM narrates.
 """
 
 from langchain.tools import tool
-from wc_predictor import WCPredictor, format_group_prediction, format_wc_winner, format_wc_match
+from wc_predictor import WCPredictor, format_group_prediction, format_wc_winner, format_wc_match, format_wc_top_scorer
 
 
-def make_wc_prediction_tools(wc: WCPredictor) -> list:
+def make_wc_prediction_tools(wc: WCPredictor, players_df=None, squads_df=None) -> list:
 
     @tool
     def predict_wc_group(group: str) -> str:
@@ -42,4 +42,19 @@ def make_wc_prediction_tools(wc: WCPredictor) -> list:
         result = wc.predict_match(team_a, team_b)
         return format_wc_match(result)
 
-    return [predict_wc_group, predict_wc_winner, predict_wc_match]
+    @tool
+    def predict_wc_top_scorer(n: int = 10) -> str:
+        """
+        Predict the top Golden Boot / top scorer candidates for the 2026 World Cup.
+        Combines each player's goals_per90 rate with expected games played (based on
+        Monte Carlo tournament stage probabilities) and shooting quality.
+        Use for: 'Who will be the top scorer at the World Cup?', 'Who wins the Golden Boot?',
+        'Best goal scorers in WC 2026?', 'Who will score the most goals at the World Cup?'
+        n: number of candidates to return (default 10).
+        """
+        if players_df is None:
+            return "Player data not available for WC top scorer projection."
+        result = wc.predict_wc_top_scorer(players_df, squads_df=squads_df, n=n)
+        return format_wc_top_scorer(result)
+
+    return [predict_wc_group, predict_wc_winner, predict_wc_match, predict_wc_top_scorer]

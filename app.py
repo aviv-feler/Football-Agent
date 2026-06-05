@@ -27,15 +27,18 @@ from agent import load_resources, build_agent
 app = Flask(__name__)
 
 # Load resources once at startup.
-print("[app] Initializing ScoutAI...", flush=True)
+print("[app] Initializing FOOTBOT...", flush=True)
 import time as _time; _t0 = _time.time()
 _engine, _national_strength, _schedule = load_resources()
 _agent = build_agent(_engine, _national_strength, _schedule)
+# Featured-match widget predictor: built once from the already-loaded strength table
+# and schedule, so the /api/wc-match endpoint doesn't rebuild them on every request.
+from wc_predictor import WCPredictor as _WCPredictor
+_wc_featured = _WCPredictor(_schedule, _national_strength)
 # Per-session locks so concurrent users don't block each other.
-# A global lock would serialize ALL requests; per-session allows parallel sessions.
 _session_locks: dict = {}
 _session_locks_lock = threading.Lock()
-print(f"[app] ScoutAI ready in {_time.time()-_t0:.1f}s", flush=True)
+print(f"[app] FOOTBOT ready in {_time.time()-_t0:.1f}s", flush=True)
 
 
 def _get_session_lock(session_id: str) -> threading.RLock:
@@ -87,8 +90,7 @@ def reset():
 @app.route("/api/wc-match")
 def wc_featured_match():
     """Return a featured upcoming WC 2026 match with our prediction for the landing widget."""
-    import requests as _req, os as _os, pandas as _pd
-    from wc_predictor import WCPredictor, format_wc_match
+    import requests as _req, os as _os
 
     # Real WC 2026 Group C fixture: Brazil vs Morocco, June 13 2026
     FALLBACK = {"home": "Brazil", "away": "Morocco", "group": "C",
@@ -113,14 +115,9 @@ def wc_featured_match():
         except Exception:
             pass
 
-    # Get prediction from WC predictor (already built)
+    # Get prediction from the WC predictor built once at startup.
     try:
-        sched = _pd.read_csv("data/fwc26_match_schedule_agent.csv")
-        from ds_engine import build_national_strength
-        from data_manager import load_player_profiles
-        nat = build_national_strength(load_player_profiles())
-        wc = WCPredictor(sched, nat)
-        pred = wc.predict_match(match["home"], match["away"])
+        pred = _wc_featured.predict_match(match["home"], match["away"])
         winner = match["home"] if pred["p_a"] > pred["p_b"] else match["away"]
         conf_pct = round(max(pred["p_a"], pred["p_b"]) * 100)
         score = pred["scoreline"]

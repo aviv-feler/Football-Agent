@@ -34,68 +34,66 @@ from wc_predictor import WCPredictor
 
 DATA_CSV     = "data/players_clean.csv"
 WC_CSV       = "data/fwc26_match_schedule_agent.csv"
+WC_SQUADS_CSV = "data/world_cup_2026_squads.csv"
 
-SYSTEM_PROMPT = """You are FOOTBOT, an elite AI football intelligence platform built on real Data Science models.
-You have a database of ~48,000 players, 10 seasons of top-5 league results, and FIFA World Cup 2026.
+SYSTEM_PROMPT = """You are FOOTBOT, an elite AI football intelligence platform backed by real Data Science models.
+You have a database of ~48,000 players, 10 seasons of top-5 league results, and a full FIFA World Cup 2026 prediction engine.
 
-IDENTITY & TONE:
-- Respond like a confident, precise football analyst — decisive, data-driven, never vague
-- Be specific: cite exact numbers, percentages, scores from the tool data
-- Give a clear verdict or recommendation — never just say "it depends"
-- Structure longer answers with bold headers or bullet points for readability
-- Never say "based on my training data", "I think", or "I believe" — present tool facts directly
+YOUR ROLE:
+You are a knowledgeable football analyst having a real conversation with the user — not a command executor.
+You think, reason, and give opinions grounded in data. You don't just route questions to functions.
+
+HOW TO THINK:
+1. Understand what the user actually wants to know.
+2. Decide which tools (if any) will give you useful data to reason with. Call one or more.
+3. Use the tool results as evidence. Reason across them. Then answer like an analyst would.
+4. If no single tool perfectly answers the question, combine multiple tools or use the data
+   you have to reason toward the best answer. Never refuse just because there's no exact tool match.
+5. For conversational football questions (tactics, opinions, comparisons, "what do you think about X"),
+   you may answer using your football knowledge — grounded in any tool data you have available.
+
+TONE:
+- Confident and decisive. Give real opinions and verdicts, not hedges.
+- Specific: cite numbers, percentages, scores from tool data wherever possible.
+- Conversational but sharp — like a football analyst on a podcast.
+- Structure longer answers with bold headers or bullet points for readability.
+- Never say "I cannot answer" when you have relevant data or football knowledge to reason with.
 
 LANGUAGE: ALWAYS respond in the SAME language the user wrote in.
-If Hebrew → full Hebrew response. If English → full English response.
+Hebrew → full Hebrew. English → full English.
 
-HARD RULES:
-1. NEVER answer player stats, rankings, similarity, predictions, standings or fixtures from memory.
-   Call the right tool first. If NO tool data was retrieved and the question is about football facts,
-   respond ONLY: "I can only answer questions based on our football database. Try asking about a
-   specific player, club, or match."
-2. Correct misspellings and expand nicknames BEFORE calling any tool:
-   "ronado"→"Cristiano Ronaldo", "mbape"→"Kylian Mbappé", "barca"→"Barcelona",
-   "man u"→"Manchester United". If ambiguous, ask briefly.
-3. You MAY call multiple tools and combine outputs into one rich answer.
-4. Tools:
-   PREDICTION (extract teams/player/league first, then call the right tool; engine predicts, you narrate):
-   - predict_club_match_score(home_team, away_team, user_context)
-       → CLUB vs CLUB scoreline. RF classifier + GB xG model + context-aware Poisson scoreline.
-         Always resolve which team is home before calling. Pass the raw user sentence as user_context.
-   - predict_match(team1, team2)
-       → NATIONAL TEAM result (squad-strength + WC Elo).
-   - predict_wc_match(team_a, team_b)
-       → Specific WC 2026 match: scoreline + probabilities on neutral ground.
-   - predict_wc_group(group)
-       → Full Group A–L standings simulation + who qualifies.
-   - predict_wc_winner()
-       → Full tournament Monte Carlo (10k sims) → win probabilities for all 48 teams.
-   - predict_top_scorer(league, n)
-       → Who will be top scorer next season? RF regressor on player attributes.
-   - predict_player_goals(player_name)
-       → Goals projection for a specific player next season. Same RF model.
-   SCOUTING (extract intent + entities, then call the right one; the engine ranks, you narrate):
-   - find_similar_player(player_name)                          — players similar to a reference
-   - find_replacement(player_name, club, max_age)             — replacement options for a player
-   - search_by_profile(role, positions, max_age, min_potential, important_features, description)
-                                                               — free-text profile search
-   - find_wonderkids(role, positions, max_age, min_potential) — young high-potential prospects
-   OTHER:
-   - get_player_archetype(player)      — K-Means role / archetype
-   - detect_anomalies(filter)          — Z-score over/under-performers
-   - compare_players_jaccard(a vs b)   — side-by-side stats + Jaccard trait overlap
-   - predict_match(team1, team2)       — Poisson (clubs) or hybrid Elo+squad (national/WC)
-   - get_live_standings(competition)   — LIVE league table / fixtures (football-data.org API)
-   - get_top_scorers(competition)      — LIVE current-season top scorers (football-data.org API)
-   - world_cup_info(query)             — World Cup 2026 schedule
-5. Prefer the LIVE API tools (get_live_standings, get_top_scorers) whenever the user asks
-   about the CURRENT/LIVE league table, standings, or this season's top scorers. Use the
-   data-science tools for analytical questions (similar / scout / predict / compare /
-   archetype / anomalies).
-5. Prefer LIVE API tools (get_live_standings, get_top_scorers) for current standings/scorers.
-   Use DS tools for analytical questions (similar/scout/predict/compare/archetype/anomalies).
-6. Keep the "🔍 Method:" line from every tool output — it is required for academic grading.
-7. Cite real numbers from tools, then add one short decisive insight. Never invent data."""
+TOOLS — use them to gather data, then reason:
+PREDICTION:
+- predict_club_match_score(home_team, away_team, user_context) → club scoreline (RF + xG + Poisson)
+- predict_wc_match(team_a, team_b)    → WC 2026 match: probabilities + scoreline (neutral ground)
+- predict_wc_group(group)             → Group A–L full standings simulation
+- predict_wc_winner()                 → tournament Monte Carlo → win probabilities for all 48 teams
+- predict_wc_top_scorer(n)            → Golden Boot candidates: goals_per90 × expected games × shooting
+- predict_top_scorer(league, n)       → next-season league top scorer (RF regressor)
+- predict_player_goals(player_name)   → goals projection for a specific player next season
+- predict_match(team1, team2)         → national/club match result (squad-strength + historical ratings)
+SCOUTING:
+- find_similar_player(player_name)    → cosine-similarity players
+- find_replacement(player_name, club, max_age) → replacement candidates
+- search_by_profile(role, positions, max_age, min_potential, important_features, description) → profile search
+- find_wonderkids(role, positions, max_age, min_potential) → young high-potential prospects
+ANALYSIS:
+- get_player_archetype(player)        → K-Means cluster role
+- detect_anomalies(filter)            → Z-score over/under-performers
+- compare_players_jaccard(a vs b)     → side-by-side stats + trait overlap
+- get_live_standings(competition)     → LIVE league table (football-data.org)
+- get_top_scorers(competition)        → LIVE current-season scorers (football-data.org)
+- world_cup_info(query)               → WC 2026 schedule and fixtures
+
+TOOL STRATEGY:
+- For LIVE standings/scorers this season → prefer get_live_standings / get_top_scorers.
+- For predictions, scouting, analysis → use the DS model tools.
+- For broad questions ("who is the best striker?", "who will win WC?") → call 1–2 relevant tools,
+  then synthesise the data into a real answer with your reasoning on top.
+- Correct typos/nicknames before any tool call: "mbape"→"Kylian Mbappé", "barca"→"Barcelona".
+
+ALWAYS keep the "🔍 Method:" line from tool outputs — required for academic grading.
+NEVER invent stats. If you cite a number, it must come from a tool result."""
 
 
 def load_resources():
@@ -128,6 +126,16 @@ MODEL_CHAIN = [
     "gemini-flash-lite-latest",
     "gemini-2.0-flash",
 ]
+
+
+class _QuotaExhausted(Exception):
+    """Raised when every configured model is quota-exhausted (429)."""
+
+
+class _RecoverableModelError(Exception):
+    """Raised when a model rejects the request for a non-quota reason (e.g. a
+    cross-model Gemini 2.5 thought_signature mismatch). The turn is retried from
+    a clean message history with the next model."""
 
 
 class ScoutAgent:
@@ -281,6 +289,10 @@ class ScoutAgent:
                 return str(tool.invoke(matchup))
 
         if any(w in q for w in ["top scorer", "topscorer", "scorers", "golden boot", "מלך השערים"]):
+            if any(w in q for w in ["world cup", "wc", "mundial", "מונדיאל", "2026"]):
+                tool = self.tool_map.get("predict_wc_top_scorer")
+                if tool:
+                    return str(tool.invoke({"n": 10}))
             tool = self.tool_map.get("get_top_scorers")
             if tool:
                 competition = self._extract_after_keywords(user_input, [
@@ -350,7 +362,11 @@ class ScoutAgent:
         return str(content)
 
     def _call_llm(self, messages):
-        """Call the LLM. On quota errors, rotate to the next configured model."""
+        """Call the LLM, rotating past quota-exhausted models.
+
+        Raises _QuotaExhausted if every model is rate-limited, or
+        _RecoverableModelError if a model rejects the (accumulated) history for a
+        non-quota reason — the caller then restarts the turn from a clean history."""
         last_err = None
         for offset in range(len(self.llms)):
             idx = (self.model_idx + offset) % len(self.llms)
@@ -360,11 +376,20 @@ class ScoutAgent:
                 return resp
             except Exception as e:
                 last_err = e
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                msg = str(e)
+                if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
                     print(f"[agent] Model {MODEL_CHAIN[idx]} hit quota; rotating.", flush=True)
                     continue
+                # Non-quota rejection (e.g. Gemini 2.5 cross-model thought_signature mismatch
+                # when a tool call from one model is replayed to another). Don't keep feeding
+                # the poisoned history to more models — advance and let invoke() restart clean.
+                if "thought_signature" in msg or "INVALID_ARGUMENT" in msg:
+                    print(f"[agent] Model {MODEL_CHAIN[idx]} rejected history "
+                          f"({msg[:70]}...); restarting turn with next model.", flush=True)
+                    self.model_idx = (idx + 1) % len(self.llms)
+                    raise _RecoverableModelError(msg) from e
                 raise
-        raise last_err
+        raise _QuotaExhausted(str(last_err))
 
     @staticmethod
     def _detect_language(text: str) -> str:
@@ -373,6 +398,46 @@ class ScoutAgent:
             if "֐" <= ch <= "׿":
                 return "Hebrew"
         return "English"
+
+    def _run_tool_loop(self, messages: list, user_input: str) -> str | None:
+        """Run the reason→tool-call→narrate loop. Returns the final answer, or None
+        if the iteration cap is hit without one. May raise _QuotaExhausted /
+        _RecoverableModelError from _call_llm."""
+        for _ in range(self.MAX_ITERATIONS):
+            response = self._call_llm(messages)
+            messages.append(response)
+
+            if not getattr(response, "tool_calls", None):
+                answer = self._extract_text(response.content) or "No response."
+                if answer.strip() in {"No response.", "No response"}:
+                    fallback = self._direct_tool_answer(user_input)
+                    if fallback:
+                        answer = fallback
+                return answer
+
+            for tc in response.tool_calls:
+                name, args = tc["name"], tc["args"]
+                tool_id    = tc.get("id", name)
+                fn = self.tool_map.get(name)
+                if fn is None:
+                    result = f"Tool '{name}' was not found."
+                else:
+                    try:
+                        # A LangChain structured tool accepts a bare string for a single
+                        # string field, but rejects a bare non-string scalar (e.g. an int
+                        # `n`) — those must stay wrapped in the args dict.
+                        if len(args) == 1 and isinstance(next(iter(args.values())), str):
+                            result = fn.invoke(next(iter(args.values())))
+                        else:
+                            result = fn.invoke(args)
+                    except Exception as e:
+                        result = f"Error running {name}: {e}"
+                try:
+                    print(f"[agent] tool={name} | args={args}", flush=True)
+                except Exception:
+                    pass  # never let a debug log line break a user request
+                messages.append(ToolMessage(content=str(result), tool_call_id=tool_id))
+        return None
 
     def invoke(self, user_input: str, session_id: str = "default") -> str:
         # Gemini-first: the model reasons over the conversation and decides which tools to
@@ -389,59 +454,34 @@ class ScoutAgent:
         ))
         # History is prepended before the current turn to preserve context across requests.
         history = self._get_history(session_id)
-        messages = [self.system_msg, *history, lang_directive,
-                    HumanMessage(content=user_input)]
-        for _ in range(self.MAX_ITERATIONS):
-            try:
-                response = self._call_llm(messages)
-            except Exception as e:
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                    # Quota fallback: answer deterministically from the tools (no LLM).
-                    fallback = self._direct_tool_answer(user_input)
-                    if fallback:
-                        self._remember(session_id, user_input, fallback)
-                        return fallback
-                    return ("ScoutAI has reached today's free Gemini quota and this question "
-                            "needs the language model. The quota resets daily — please try "
-                            "again later, or ask directly for similar players, a scouting "
-                            "list, a prediction, standings, or top scorers.")
-                raise
-            messages.append(response)
+        base = [self.system_msg, *history, lang_directive, HumanMessage(content=user_input)]
 
-            if not getattr(response, "tool_calls", None):
-                answer = self._extract_text(response.content) or "No response."
-                if answer.strip() in {"No response.", "No response"}:
-                    fallback = self._direct_tool_answer(user_input)
-                    if fallback:
-                        answer = fallback
+        quota_hit = False
+        # Each restart begins from a clean copy of `base`, so a model that chokes on
+        # another model's tool-call history never poisons the retry.
+        for _restart in range(len(self.llms)):
+            try:
+                answer = self._run_tool_loop(list(base), user_input)
+            except _QuotaExhausted:
+                quota_hit = True
+                break
+            except _RecoverableModelError:
+                continue  # _call_llm already advanced model_idx; retry the turn cleanly
+            if answer is not None:
                 self._remember(session_id, user_input, answer)
                 return answer
+            break  # iteration cap reached — drop to the deterministic fallback
 
-            for tc in response.tool_calls:
-                name, args = tc["name"], tc["args"]
-                tool_id    = tc.get("id", name)
-                fn = self.tool_map.get(name)
-                if fn is None:
-                    result = f"Tool '{name}' was not found."
-                else:
-                    try:
-                        if len(args) == 1:
-                            result = fn.invoke(next(iter(args.values())))
-                        else:
-                            result = fn.invoke(args)
-                    except Exception as e:
-                        result = f"Error running {name}: {e}"
-                try:
-                    print(f"[agent] tool={name} | args={args}", flush=True)
-                except Exception:
-                    pass  # never let a debug log line break a user request
-                messages.append(ToolMessage(content=str(result), tool_call_id=tool_id))
-
-        # Hit the iteration cap without a final answer — fall back to the deterministic router.
+        # No clean LLM answer — fall back to the deterministic router.
         fallback = self._direct_tool_answer(user_input)
         if fallback:
             self._remember(session_id, user_input, fallback)
             return fallback
+        if quota_hit:
+            return ("ScoutAI has reached today's free Gemini quota and this question "
+                    "needs the language model. The quota resets daily — please try "
+                    "again later, or ask directly for similar players, a scouting "
+                    "list, a prediction, standings, or top scorers.")
         return "I couldn't complete that — try asking a more focused question."
 
 
@@ -466,6 +506,14 @@ def build_agent(engine, national_strength, schedule):
 
     pred_engine = PredictionEngine()
     wc_pred = WCPredictor(schedule, national_strength)
+    # Official 2026 squad lists → used to restrict top-scorer candidates to called-up players.
+    if os.path.exists(WC_SQUADS_CSV):
+        wc_squads = pd.read_csv(WC_SQUADS_CSV)
+        print(f"[agent] WC 2026 squads loaded: {len(wc_squads)} players across "
+              f"{wc_squads['team'].nunique()} teams.", flush=True)
+    else:
+        wc_squads = None
+        print(f"[agent] Warning: {WC_SQUADS_CSV} not found — top-scorer won't filter by squad.", flush=True)
     print(f"[agent] WC predictor ready: {len(wc_pred.all_teams)} teams, {len(wc_pred.groups)} groups.", flush=True)
     print("[agent] Pre-computing WC tournament simulation (5k sims)...", flush=True)
     wc_pred.warm_up()
@@ -475,7 +523,7 @@ def build_agent(engine, national_strength, schedule):
 
     tools = [
         *make_prediction_tools(pred_engine),
-        *make_wc_prediction_tools(wc_pred),
+        *make_wc_prediction_tools(wc_pred, players_df=engine.df, squads_df=wc_squads),
         *make_scouting_tools(scout),
         make_get_player_archetype_tool(engine),
         make_detect_anomalies_tool(engine),
@@ -493,12 +541,19 @@ def build_agent(engine, national_strength, schedule):
 
     llms_with_tools = []
     for model_name in MODEL_CHAIN:
-        llm = ChatGoogleGenerativeAI(
+        kwargs = dict(
             model=model_name,
             google_api_key=api_key,
             temperature=0.3,
             max_retries=0,
         )
+        # Disable "thinking" on Gemini 2.5+ flash models. Thinking adds per-call
+        # thought_signatures that must be echoed back — which breaks when we rotate
+        # models mid tool-call on quota. Turning it off also makes replies faster and
+        # cheaper. (gemini-2.0-flash isn't a thinking model, so skip it there.)
+        if "2.0" not in model_name:
+            kwargs["thinking_budget"] = 0
+        llm = ChatGoogleGenerativeAI(**kwargs)
         llms_with_tools.append(llm.bind_tools(tools))
 
     agent = ScoutAgent(llms_with_tools=llms_with_tools, tools=tools)

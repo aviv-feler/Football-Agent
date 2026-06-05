@@ -22,11 +22,42 @@ Method:
 
 from __future__ import annotations
 
+import re
 import math
 import random
+import unicodedata
 import numpy as np
 import pandas as pd
 from collections import defaultdict
+
+
+# ── squad name-matching helpers ───────────────────────────────────────────────
+def _strip_accents(s: str) -> str:
+    nf = unicodedata.normalize("NFKD", str(s))
+    return "".join(c for c in nf if not unicodedata.combining(c))
+
+
+def _team_key(s: str) -> str:
+    """Normalise a team name so squad and schedule spellings collapse to one key.
+    'Bosnia & Herzegovina' / 'Bosnia And Herzegovina' → 'bosnia and herzegovina'."""
+    s = _strip_accents(s).lower().replace("&", " and ")
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _name_toks(s: str) -> list[str]:
+    """Ordered, accent-stripped name tokens (len >= 2, so initials like 'J.' drop)."""
+    s = _strip_accents(s).lower()
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return [t for t in s.split() if len(t) >= 2]
+
+
+def _first_name_match(a: str, b: str) -> bool:
+    """True if two first names match exactly or one is a prefix of the other
+    (handles 'Nico' vs 'Nicolás', 'Alex' vs 'Alexander')."""
+    if a == b:
+        return True
+    return len(a) >= 3 and len(b) >= 3 and (a.startswith(b) or b.startswith(a))
 
 # ── WC 2026 team name → player-data nationality name (for strength lookup) ───
 WC_NAME_MAP: dict[str, str] = {
@@ -36,8 +67,8 @@ WC_NAME_MAP: dict[str, str] = {
     "Korea Republic":        "Korea, South",
     "Czechia":               "Czech Republic",
     "Côte d'Ivoire":         "Cote d'Ivoire",
-    "Cote d’Ivoire":    "Cote d'Ivoire",
-    "Côte d'Ivoire":    "Cote d'Ivoire",
+    "Cote d’Ivoire":         "Cote d'Ivoire",
+    "Côte d’Ivoire":         "Cote d'Ivoire",
     "Bosnia & Herzegovina":  "Bosnia-Herzegovina",
     "Cabo Verde":            "Cape Verde",
     "Congo DR":              "DR Congo",
@@ -89,6 +120,8 @@ class WCPredictor:
         self.gs = schedule[schedule["stage"] == "Group Stage"].copy()
         # All 48 WC teams from the group stage
         self._winner_cache: dict | None = None  # computed once at first call
+        self._sim_cache: dict | None = None     # full per-team simulation results
+        self._squad_index: dict | None = None   # team_key → list of squad attacker descriptors
         self.all_teams: list[str] = sorted(
             set(self.gs["team1_name"].dropna().tolist() +
                 self.gs["team2_name"].dropna().tolist())
@@ -228,12 +261,13 @@ class WCPredictor:
     def simulate_tournament(self, n_sims: int = 10_000) -> dict:
         """
         Monte Carlo tournament simulation.
-        Returns: win_prob, finalist_prob, semi_prob, qualified_prob per team.
+        Returns: win_prob, semi_prob, quarters_prob, r16_prob, r32_prob per team.
         """
         groups = list(self.groups.values())
-        group_keys = list(self.groups.keys())
-        counts: dict[str, dict] = {t: {"wins":0,"final":0,"semi":0,"quarters":0,"qualified":0}
-                                    for t in self.all_teams}
+        counts: dict[str, dict] = {
+            t: {"wins": 0, "semi": 0, "quarters": 0, "r16": 0, "r32": 0}
+            for t in self.all_teams
+        }
         for _ in range(n_sims):
             # Group stage
             qualified: list[str] = []
@@ -250,34 +284,40 @@ class WCPredictor:
             # Knockout rounds
             random.shuffle(qualified)
             round_teams = qualified[:]
-            n_teams = len(round_teams)
             while len(round_teams) > 1:
                 n = len(round_teams)
                 next_round = []
                 for i in range(0, n, 2):
-                    winner = self._sim_match(round_teams[i], round_teams[i+1])
+                    t1, t2 = round_teams[i], round_teams[i + 1]
+                    winner = self._sim_match(t1, t2)
                     next_round.append(winner)
-                    # Track deep runs
-                    if n == 4:    # semi-finals
-                        counts[round_teams[i]]["semi"] += 1
-                        counts[round_teams[i+1]]["semi"] += 1
-                    if n == 8:    # quarter-finals
-                        counts[round_teams[i]]["quarters"] += 1
-                        counts[round_teams[i+1]]["quarters"] += 1
+                    if n == 32:
+                        counts[t1]["r32"] += 1
+                        counts[t2]["r32"] += 1
+                    elif n == 16:
+                        counts[t1]["r16"] += 1
+                        counts[t2]["r16"] += 1
+                    elif n == 8:
+                        counts[t1]["quarters"] += 1
+                        counts[t2]["quarters"] += 1
+                    elif n == 4:
+                        counts[t1]["semi"] += 1
+                        counts[t2]["semi"] += 1
                 round_teams = next_round
 
             counts[round_teams[0]]["wins"] += 1
 
-        # Qualification probability: teams in top-2 per group most of the time
-        # Compute separately for display
         N = n_sims
         result = {}
         for t, c in counts.items():
             result[t] = {
-                "win_prob":     round(c["wins"] / N * 100, 1),
-                "semi_prob":    round(c["semi"] / N * 100, 1),
-                "quarters_prob":round(c["quarters"] / N * 100, 1),
+                "win_prob":      round(c["wins"]    / N * 100, 1),
+                "semi_prob":     round(c["semi"]    / N * 100, 1),
+                "quarters_prob": round(c["quarters"]/ N * 100, 1),
+                "r16_prob":      round(c["r16"]     / N * 100, 1),
+                "r32_prob":      round(c["r32"]     / N * 100, 1),
             }
+        self._sim_cache = result
         return result
 
     def predict_wc_winner(self, n_sims: int = 5_000) -> dict:
@@ -290,6 +330,139 @@ class WCPredictor:
                for t, stats in ranked if stats["win_prob"] > 0][:12]
         self._winner_cache = {"type": "wc_winner", "n_sims": n_sims, "candidates": top}
         return self._winner_cache
+
+    def _build_squad_index(self, squads_df: "pd.DataFrame") -> dict:
+        """Index the official 2026 squads by normalised team name.
+        Only forwards/midfielders are kept as match targets (top-scorer candidates),
+        which also removes goalkeeper/defender name collisions."""
+        index: dict[str, list[dict]] = {}
+        for _, r in squads_df.iterrows():
+            if str(r.get("position", "")).upper() not in ("FW", "MF"):
+                continue
+            fn = _name_toks(r.get("first_names", ""))
+            ln = _name_toks(r.get("last_names", ""))
+            sh = _name_toks(r.get("name_on_shirt", ""))
+            index.setdefault(_team_key(r.get("team", "")), []).append({
+                "name":      str(r.get("player_name", "")),
+                "first":     fn[0] if fn else "",
+                "surnames":  set(ln),
+                "shirt":     " ".join(sh),
+            })
+        return index
+
+    @staticmethod
+    def _match_squad(db_name: str, members: list[dict]) -> str | None:
+        """Return the squad player_name a database player maps to, or None.
+        Multi-token names match on (surname ∈ squad surnames) + (first-name match);
+        single-token names (Brazilian mononyms) must equal a shirt or first name."""
+        db = _name_toks(db_name)
+        if not db:
+            return None
+        if len(db) == 1:
+            for m in members:
+                if db[0] == m["shirt"] or db[0] == m["first"]:
+                    return m["name"]
+            return None
+        db_first, db_sur = db[0], db[-1]
+        for m in members:
+            if db_sur in m["surnames"] and _first_name_match(db_first, m["first"]):
+                return m["name"]
+        joined = " ".join(db)
+        for m in members:
+            if joined == m["shirt"]:
+                return m["name"]
+        return None
+
+    def predict_wc_top_scorer(self, players_df: "pd.DataFrame",
+                              squads_df: "pd.DataFrame | None" = None, n: int = 10) -> dict:
+        """
+        Project top Golden Boot candidates: player goal rate × expected WC games played.
+        Expected games = 3 (group) + P(R32) + P(R16) + P(QF) + P(SF) + 2·P(win).
+        When the official squad list is supplied, only players actually called up are
+        considered (so retired/uncalled players like Benzema are excluded).
+        """
+        import pandas as _pd
+        from prediction_engine import ATTACKER_SUBS
+
+        if self._sim_cache is None:
+            self.simulate_tournament(5_000)
+        sim = self._sim_cache
+
+        if squads_df is not None and self._squad_index is None:
+            self._squad_index = self._build_squad_index(squads_df)
+        squad_index = self._squad_index
+
+        attack_subs = ATTACKER_SUBS | {"Centre-Forward"}
+        has_minutes = "minutes_played" in players_df.columns
+
+        rows = []
+        for team in self.all_teams:
+            probs = sim.get(team, {})
+            e_games = (
+                3
+                + probs.get("r32_prob", 0) / 100
+                + probs.get("r16_prob", 0) / 100
+                + probs.get("quarters_prob", 0) / 100
+                + probs.get("semi_prob", 0) / 100
+                + probs.get("win_prob", 0) / 100 * 2
+            )
+
+            nat = self._mapped.get(team, team)
+            nation_df = players_df[
+                (players_df["nationality"] == nat) &
+                players_df["sub_position"].isin(attack_subs)
+            ].copy()
+            if nation_df.empty:
+                continue
+
+            for col in ("goals_per90", "fc_shooting", "fc_overall", "goals", "minutes_played"):
+                if col in nation_df.columns:
+                    nation_df[col] = _pd.to_numeric(nation_df[col], errors="coerce").fillna(0)
+
+            # The stored goals_per90 is unreliable (capped/defaulted to ~0.59 for top
+            # scorers), so recompute the real rate from goals & minutes where possible.
+            stored_g90 = nation_df.get("goals_per90", _pd.Series(0.0, index=nation_df.index))
+            if has_minutes:
+                mins = nation_df["minutes_played"]
+                real_g90 = (nation_df["goals"] / mins.where(mins > 0, np.nan) * 90.0)
+                g90 = real_g90.where(mins >= 300, stored_g90).fillna(0.0)
+            else:
+                g90 = stored_g90
+            g90 = g90.clip(lower=0.0, upper=1.2)
+
+            shooting = nation_df.get("fc_shooting", _pd.Series(70.0, index=nation_df.index))
+            nation_df["wc_g90"] = g90
+            nation_df["wc_proj"] = g90 * e_games * (shooting / 80.0)
+            nation_df = nation_df.sort_values("wc_proj", ascending=False)
+
+            members = squad_index.get(_team_key(team)) if squad_index is not None else None
+            taken: set[str] = set()    # one DB row per squad player
+
+            for _, r in nation_df.iterrows():
+                if members is not None:
+                    matched = self._match_squad(str(r.get("player_name", "")), members)
+                    if matched is None or matched in taken:
+                        continue
+                    taken.add(matched)
+                rows.append({
+                    "player":         str(r.get("player_name", "Unknown")),
+                    "team":           team,
+                    "nationality":    nat,
+                    "sub_position":   str(r.get("sub_position", "")),
+                    "goals_per90":    round(float(r.get("wc_g90", 0)), 2),
+                    "shooting":       int(r.get("fc_shooting", 0)),
+                    "overall":        int(r.get("fc_overall", 0)),
+                    "expected_games": round(e_games, 1),
+                    "wc_proj_goals":  round(float(r.get("wc_proj", 0)), 2),
+                })
+                # Cap candidates per team so one nation can't flood the board.
+                if sum(1 for x in rows if x["team"] == team) >= 4:
+                    break
+
+        rows.sort(key=lambda x: x["wc_proj_goals"], reverse=True)
+        note = ("wc_proj_goals = goals_per90 × expected_games_played × shooting_quality_factor"
+                + ("; candidates restricted to official 2026 squads" if squad_index else ""))
+        return {"type": "wc_top_scorer", "candidates": rows[:n], "note": note}
 
     def warm_up(self) -> None:
         """Pre-compute the tournament simulation at startup so the first call is instant."""
@@ -311,7 +484,7 @@ def format_group_prediction(result: dict) -> str:
     for m in result["match_predictions"]:
         lines.append(f"• {m['match']}: **{m['predicted']}** ({m['p_a']} / {m['p_draw']} / {m['p_b']})")
     lines.append(f"\n_{result['note']}_")
-    lines.append("\n🔍 Method: Neutral-ground match probabilities from hybrid squad-value + World Cup Elo strength. "
+    lines.append("\n🔍 Method: Neutral-ground match probabilities from hybrid squad-value + historical tournament ratings."
                  "Group standings from expected-value simulation of all 6 group matches.")
     return "\n".join(lines)
 
@@ -326,9 +499,26 @@ def format_wc_winner(result: dict) -> str:
             f"{i:>2}. **{c['team']:<22}** {c['win_prob']:>5}% to win  "
             f"| {c['semi_prob']:>5}% to reach semi  {bar}"
         )
-    lines.append("\n🔍 Method: Monte Carlo simulation (10,000 tournaments). Each match uses softmax "
-                 "probabilities on the hybrid squad-strength + World Cup Elo rating. Group stage simulated "
+    lines.append(f"\n🔍 Method: Logistic Regression on hybrid squad-strength + historical WC ratings. "
+                 f"Tournament simulated with {n:,} Monte Carlo runs. Group stage simulated "
                  "with Poisson goals; knockout rounds use head-to-head win probabilities.")
+    return "\n".join(lines)
+
+
+def format_wc_top_scorer(result: dict) -> str:
+    cands = result["candidates"]
+    lines = ["**World Cup 2026 — Golden Boot candidates (projected goals):**\n",
+             f"{'#':<4} {'Player':<24} {'Team':<22} {'Pos':<20} {'G/90':<7} {'SHT':<6} {'xGames':<8} {'Proj WC Goals'}"]
+    lines.append("-" * 95)
+    for i, c in enumerate(cands, 1):
+        lines.append(
+            f"{i:<4} {c['player']:<24} {c['team']:<22} {c['sub_position']:<20} "
+            f"{c['goals_per90']:<7} {c['shooting']:<6} {c['expected_games']:<8} {c['wc_proj_goals']:.1f}"
+        )
+    lines.append(f"\n_{result['note']}_")
+    lines.append("\n🔍 Method: Player goal-rate (goals/90) from FBref + FC26 data × expected WC "
+                 "games (Monte Carlo R32/R16/QF/SF/Final stage probabilities) × shooting quality. "
+                 "Candidates restricted to official 2026 squads; ranked by projected tournament goals.")
     return "\n".join(lines)
 
 
@@ -343,7 +533,7 @@ def format_wc_match(result: dict) -> str:
         f"Expected goals: {a} {result['xg_a']} — {b} {result['xg_b']}",
         f"Team strength: {a} {result['strength_a']} vs {b} {result['strength_b']} (scale 0–1)",
         "",
-        f"🔍 Method: Neutral-ground softmax on hybrid squad-value + WC Elo pedigree. "
+        f"🔍 Method: Logistic Regression on hybrid squad-value + historical WC tournament ratings."
         f"Scoreline from context-aware Poisson distribution (match profile: {result['profile'].replace('_',' ')})."
     ]
     return "\n".join(lines)

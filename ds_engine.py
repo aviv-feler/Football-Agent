@@ -273,10 +273,10 @@ def build_national_strength(df: pd.DataFrame, squad: int = 23,
         raw = nat["squad_strength"] + adj.fillna(0.0)
         nat["strength"] = (raw - raw.min()) / (raw.max() - raw.min())
         if tot:
-            print(f"[ds_engine] Elo walk-forward backtest on {tot} decisive matches with "
-                  f"odds: model {mc/tot:.0%} correct vs bookmaker {bc/tot:.0%}", flush=True)
-        print(f"[ds_engine] Pedigree blended for {int(has.sum())}/{len(nat)} nations "
-              f"(rest use squad strength).", flush=True)
+            print(f"[ds_engine] Team rating backtest on {tot} matches: "
+                  f"model {mc/tot:.0%} correct vs bookmaker {bc/tot:.0%}", flush=True)
+        print(f"[ds_engine] Historical ratings blended for {int(has.sum())}/{len(nat)} nations "
+              f"(rest use squad strength only).", flush=True)
     else:
         nat["pedigree_elo"] = np.nan
         nat["n_wc_matches"] = 0

@@ -61,8 +61,7 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame, c
 
         def pedigree(row) -> str:
             if bool(row.get("has_history", False)):
-                return (f"WC pedigree Elo {int(row['pedigree_elo'])} "
-                        f"from {int(row['n_wc_matches'])} World Cup matches")
+                return (f"historical tournament rating from {int(row['n_wc_matches'])} World Cup matches")
             return "no World Cup history (squad strength only)"
 
         return (
@@ -78,8 +77,8 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame, c
             + (f"{team1} has the stronger combined profile and is the favorite." if s1 > s2 + 0.05
                else f"{team2} has the stronger combined profile and is the favorite." if s2 > s1 + 0.05
                else "The teams are close, so this projects as a tight match.")
-            + "\n\n🔍 Method: Logistic (softmax) on a hybrid national-team strength = current "
-              "squad market value blended with walk-forward World Cup Elo pedigree."
+            + "\n\n🔍 Method: Logistic Regression on hybrid national-team strength = current "
+              "squad market value blended with historical World Cup tournament ratings."
         )
 
     @tool

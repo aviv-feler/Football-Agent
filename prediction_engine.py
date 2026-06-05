@@ -129,15 +129,19 @@ def calculate_team_form(team: str, matches: pd.DataFrame,
         return {"points": 0, "wins": 0, "draws": 0, "goals_f": 0, "goals_a": 0,
                 "shots_f": 0, "shots_a": 0, "n": 0}
     pts = wins = draws = gf = ga = sf = sa = 0
+    # NaN is truthy, so `x or 0` leaks NaN into the feature vector and makes the
+    # downstream sklearn predict() raise. Coerce missing shots to 0 explicitly.
+    def _shots(v):
+        return 0 if pd.isna(v) else v
     for r in recent.itertuples(index=False):
         if r.home == team:
             gf += r.fthg; ga += r.ftag
-            sf += (r.home_shots or 0); sa += (r.away_shots or 0)
+            sf += _shots(r.home_shots); sa += _shots(r.away_shots)
             if r.ftr == "H":   pts += 3; wins += 1
             elif r.ftr == "D": pts += 1; draws += 1
         else:
             gf += r.ftag; ga += r.fthg
-            sf += (r.away_shots or 0); sa += (r.home_shots or 0)
+            sf += _shots(r.away_shots); sa += _shots(r.home_shots)
             if r.ftr == "A":   pts += 3; wins += 1
             elif r.ftr == "D": pts += 1; draws += 1
     n_act = len(recent)
@@ -678,7 +682,7 @@ class PredictionEngine:
         self.players = pd.read_csv(players_path, low_memory=False)
         self.known_clubs = set(self.matches["home"].dropna()) | set(self.matches["away"].dropna())
 
-        print("[prediction] Computing Elo ratings...", flush=True)
+        print("[prediction] Computing team ratings...", flush=True)
         self.club_elo = calculate_elo_ratings(self.matches)
 
         print("[prediction] Building team strength from player data...", flush=True)
@@ -780,9 +784,9 @@ class PredictionEngine:
     def _explain(self, home, away, feat, ph, pd_, pa, xgh, xga, profile) -> list[str]:
         f = []
         if feat["elo_diff"] > 40:
-            f.append(f"{home} have a stronger historical Elo rating (+{feat['elo_diff']:.0f})")
+            f.append(f"{home} have a stronger historical rating (+{feat['elo_diff']:.0f})")
         elif feat["elo_diff"] < -40:
-            f.append(f"{away} have a stronger historical Elo rating ({feat['elo_diff']:.0f})")
+            f.append(f"{away} have a stronger historical rating ({feat['elo_diff']:.0f})")
         if feat["form_diff"] > 0.3:
             f.append(f"{home} are in better recent form (+{feat['form_diff']:.1f} pts/game)")
         elif feat["form_diff"] < -0.3:
@@ -825,7 +829,6 @@ class PredictionEngine:
 
     # ── player goals ────────────────────────────────────────────────────────
     def predict_player_goals(self, player_name: str) -> dict:
-        from ds_engine import DSEngine  # use existing fuzzy lookup
         df = self.player_feat_df
         q = player_name.strip().lower()
         hit = df[df["player_name"].str.lower().str.contains(q, na=False)]
