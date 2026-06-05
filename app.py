@@ -4,8 +4,19 @@ ScoutAI Flask server - main entry point.
 """
 
 import os
+import sys
 import threading
 import uuid
+
+# Force UTF-8 on the console so debug prints with accented player names ("Mbappé",
+# "Højlund") or emoji never raise UnicodeEncodeError on a Windows cp125x console — that
+# error would otherwise propagate up and fail the whole request.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 

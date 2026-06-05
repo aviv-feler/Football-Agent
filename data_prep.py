@@ -349,6 +349,77 @@ def build_archetypes(centroids: np.ndarray, feature_names: list[str]) -> dict:
     return labels
 
 
+# Position-aware archetype axes: within each position group we run K-Means and name each
+# cluster by the feature it scores highest on (relative to that group). One feature -> one
+# football-meaningful label; with k = number of axes we get a clean 1:1 naming.
+ARCHETYPE_AXES = {
+    "Attack": [
+        ("fc_shooting",        "Finisher / Poacher"),
+        ("fc_pace",            "Pace & dribbling winger"),
+        ("assists_per90",      "Creative forward"),
+        ("market_value_log",   "Elite all-round forward"),
+    ],
+    "Midfield": [
+        ("fc_defending",       "Defensive midfielder / Ball-winner"),
+        ("fc_passing",         "Playmaker / Creator"),
+        ("goals_per90",        "Goal-scoring midfielder"),
+        ("minutes_played_log", "Box-to-box midfielder"),
+    ],
+    "Defender": [
+        ("fc_passing",         "Ball-playing defender"),
+        ("fc_defending",       "Defensive stopper"),
+        ("fc_pace",            "Pace-reliant defender"),
+        ("height_in_cm",       "Aerial / physical defender"),
+    ],
+}
+
+
+def _name_group_clusters(sub_X, axes, fidx):
+    """K-Means within one position group; map each cluster to a distinct axis label."""
+    k = min(len(axes), len(sub_X))
+    if k < 1:
+        return ["General profile"] * len(sub_X)
+    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+    cl = km.fit_predict(sub_X)
+    # Mean (global z-scored) value per axis feature, per cluster.
+    cluster_axis = {
+        c: {feat: float(sub_X[cl == c][:, fidx[feat]].mean()) for feat, _ in axes}
+        for c in range(k)
+    }
+    # Greedy 1:1 assignment: each axis label goes to its strongest unclaimed cluster.
+    assigned, used = {}, set()
+    for feat, name in axes:
+        best_c, best_v = None, -1e18
+        for c in range(k):
+            if c in used:
+                continue
+            if cluster_axis[c][feat] > best_v:
+                best_v, best_c = cluster_axis[c][feat], c
+        if best_c is not None:
+            assigned[best_c] = name
+            used.add(best_c)
+    for c in range(k):
+        assigned.setdefault(c, axes[-1][1])
+    return [assigned[c] for c in cl]
+
+
+def assign_position_archetypes(df: pd.DataFrame, X: np.ndarray, feature_names: list[str]) -> np.ndarray:
+    """Position-aware K-Means archetype label for every player (row-aligned to X)."""
+    log("Assigning position-aware K-Means archetypes...")
+    fidx = {f: i for i, f in enumerate(feature_names)}
+    labels = np.array(["General profile"] * len(df), dtype=object)
+    pos = df["position"].astype(str).values
+    for group, axes in ARCHETYPE_AXES.items():
+        idx = np.where(pos == group)[0]
+        if len(idx) == 0:
+            continue
+        group_labels = _name_group_clusters(X[idx], axes, fidx)
+        for j, i in enumerate(idx):
+            labels[i] = group_labels[j]
+    labels[pos == "Goalkeeper"] = "Goalkeeper"
+    return labels
+
+
 def main():
     os.makedirs("data", exist_ok=True)
     for p in (PLAYERS_CSV, APPEARANCES_CSV):
@@ -385,9 +456,12 @@ def main():
     df["cluster"] = km.fit_predict(X)
     log(f"Cluster distribution: {df['cluster'].value_counts().sort_index().to_dict()}")
 
+    # Global cluster is kept for anomaly detection (z-score vs cluster centroid).
     archetypes = build_archetypes(km.cluster_centers_, FEATURE_COLS)
-    df["archetype"] = df["cluster"].map(archetypes)
-    log(f"Archetypes: {archetypes}")
+    # Player-facing archetype is position-aware (far more meaningful than the global label).
+    df["position_group"] = df["position"]
+    df["archetype"] = assign_position_archetypes(df, X, FEATURE_COLS)
+    log(f"Position-aware archetype counts: {pd.Series(df['archetype']).value_counts().to_dict()}")
 
     # Helper columns for Jaccard and display.
     df["age_bucket"] = pd.cut(df["age"], bins=[0, 21, 25, 29, 33, 99],

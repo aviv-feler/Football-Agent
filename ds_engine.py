@@ -10,7 +10,9 @@ Methods:
 """
 
 import os
+import re
 import json
+import difflib
 import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
@@ -55,17 +57,46 @@ class DSEngine:
             return "".join(ch for ch in nf if not unicodedata.combining(ch)).lower().strip()
         self._norm = norm
         self.names_norm = self.df["player_name"].fillna("").map(norm)
+        # Token vocabulary for fuzzy typo matching (e.g. "ronado" -> "ronaldo").
+        toks = set()
+        for n in self.names_norm:
+            for t in n.split():
+                if len(t) >= 4:
+                    toks.add(t)
+        self._name_tokens = sorted(toks)
 
     def find_index(self, query: str):
         q = self._norm(query)
+        # 1. Exact full-name match.
         exact = self.df.index[self.names_norm == q]
         if len(exact):
             return self._most_prominent(exact)
-        contains = self.df.index[self.names_norm.str.contains(q, na=False, regex=False)]
-        if len(contains):
-            return self._most_prominent(contains)
+        # 2. Full query as a substring — only for multi-word inputs ("kylian mbappe"), so a
+        #    single typed word like "ronado" can't match inside "coronado".
+        if " " in q:
+            contains = self.df.index[self.names_norm.str.contains(q, na=False, regex=False)]
+            if len(contains):
+                return self._most_prominent(contains)
+        # 3. Whole-word token match (so "ronado" does NOT match "coronado").
         for part in q.split():
             if len(part) < 3:
+                continue
+            m = self.df.index[self.names_norm.str.contains(rf"\b{re.escape(part)}\b", na=False, regex=True)]
+            if len(m):
+                return self._most_prominent(m)
+        # 4. Fuzzy typo match: for each query word try the CLOSEST name tokens first, and
+        #    return the most prominent player for the first token that matches (so the typo
+        #    "ronado" resolves to its nearest token "ronaldo" rather than "coronado").
+        for part in q.split():
+            if len(part) < 4:
+                continue
+            for tok in difflib.get_close_matches(part, self._name_tokens, n=3, cutoff=0.84):
+                m = self.df.index[self.names_norm.str.contains(rf"\b{re.escape(tok)}\b", na=False, regex=True)]
+                if len(m):
+                    return self._most_prominent(m)
+        # 5. Weak substring fallback for partial names (e.g. "ronald").
+        for part in q.split():
+            if len(part) < 4:
                 continue
             m = self.df.index[self.names_norm.str.contains(part, na=False, regex=False)]
             if len(m):

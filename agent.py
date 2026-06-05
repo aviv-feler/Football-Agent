@@ -17,16 +17,18 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, System
 
 from data_manager import PLAYER_PROFILES_FILE, load_player_profiles, write_source_map
 from ds_engine import load_engine, build_national_strength, normalize_nation
-from tools.find_similar_players import make_find_similar_players_tool
-from tools.scout_players import make_scout_players_tool
+from scouting import ScoutingEngine, parse_scouting_query
+from tools.scouting_tools import make_scouting_tools
 from tools.get_player_archetype import make_get_player_archetype_tool
 from tools.detect_anomalies import make_detect_anomalies_tool
 from tools.compare_players_jaccard import make_compare_players_jaccard_tool
 from tools.predict_match import make_predict_match_tool
+from tools.predict_score import make_prediction_tools
 from tools.get_live_standings import make_get_live_standings_tool
 from tools.get_top_scorers import make_get_top_scorers_tool
 from tools.world_cup import make_world_cup_tool
 from club_model import ClubModel
+from prediction_engine import PredictionEngine, parse_prediction_query
 
 DATA_CSV     = "data/players_clean.csv"
 WC_CSV       = "data/fwc26_match_schedule_agent.csv"
@@ -42,12 +44,33 @@ HARD RULES:
    fixtures, scorers) ONLY on tool outputs. NEVER answer these from your own memory — your
    training data is outdated and will be wrong. If you have not called a tool, you do not
    know the answer, so call one.
-2. Pick tools by meaning, not keywords. You MAY call several tools and combine their outputs
+2. FIRST understand the question, THEN act. Correct obvious misspellings and expand
+   nicknames/short forms of player, club and national-team names to their correct full name
+   BEFORE calling any tool — e.g. "ronado" -> "Cristiano Ronaldo", "mbape" -> "Kylian Mbappé",
+   "benzema" -> "Karim Benzema", "barca" -> "Barcelona", "man u" -> "Manchester United". Pass
+   the corrected name to the tool. If a name is genuinely ambiguous, ask a brief clarifying
+   question instead of guessing.
+3. Pick tools by meaning, not keywords. You MAY call several tools and combine their outputs
    into one richer answer (e.g. to compare two players, call compare_players_jaccard and, if
    helpful, get_player_archetype for each).
-3. Tools:
-   - find_similar_players(player)      — cosine similarity on current-season + FC26 vectors
-   - scout_players(criteria)           — content-based ranking from natural-language criteria
+4. Tools:
+   PREDICTION (extract teams/player/league first, then call the right tool; engine predicts, you narrate):
+   - predict_club_match_score(home_team, away_team, user_context)
+       → CLUB vs CLUB scoreline. RF classifier + GB xG model + context-aware Poisson scoreline.
+         Always resolve which team is home before calling. Pass the raw user sentence as user_context.
+   - predict_match(team1, team2)
+       → NATIONAL TEAM / World Cup result. Hybrid squad-strength + WC Elo pedigree.
+   - predict_top_scorer(league, n)
+       → Who will be top scorer next season? RF regressor on player attributes.
+   - predict_player_goals(player_name)
+       → Goals projection for a specific player next season. Same RF model.
+   SCOUTING (extract intent + entities, then call the right one; the engine ranks, you narrate):
+   - find_similar_player(player_name)                          — players similar to a reference
+   - find_replacement(player_name, club, max_age)             — replacement options for a player
+   - search_by_profile(role, positions, max_age, min_potential, important_features, description)
+                                                               — free-text profile search
+   - find_wonderkids(role, positions, max_age, min_potential) — young high-potential prospects
+   OTHER:
    - get_player_archetype(player)      — K-Means role / archetype
    - detect_anomalies(filter)          — Z-score over/under-performers
    - compare_players_jaccard(a vs b)   — side-by-side stats + Jaccard trait overlap
@@ -55,13 +78,13 @@ HARD RULES:
    - get_live_standings(competition)   — LIVE league table / fixtures (football-data.org API)
    - get_top_scorers(competition)      — LIVE current-season top scorers (football-data.org API)
    - world_cup_info(query)             — World Cup 2026 schedule
-4. Prefer the LIVE API tools (get_live_standings, get_top_scorers) whenever the user asks
+5. Prefer the LIVE API tools (get_live_standings, get_top_scorers) whenever the user asks
    about the CURRENT/LIVE league table, standings, or this season's top scorers. Use the
    data-science tools for analytical questions (similar / scout / predict / compare /
    archetype / anomalies).
-5. Every tool output ends with a "🔍 Method:" line. ALWAYS keep that exact line in your
+6. Every tool output ends with a "🔍 Method:" line. ALWAYS keep that exact line in your
    answer — it is required for grading.
-6. Reply in the user's language (Hebrew or English). Cite the real numbers from the tools,
+7. Reply in the user's language (Hebrew or English). Cite the real numbers from the tools,
    then add one short, smart insight. Never invent players, numbers, or rankings."""
 
 
@@ -202,15 +225,10 @@ class ScoutAgent:
         return {"team1": team1, "team2": team2}
 
     def _direct_tool_answer(self, user_input: str) -> str | None:
-        """Deterministic routing for common graded/demo data-science queries."""
+        """Deterministic routing used as a fallback when the LLM is unavailable (quota)."""
         q = user_input.lower()
 
-        if any(w in q for w in ["similar", "like", "דומה", "דומים", "כמו"]):
-            tool = self.tool_map.get("find_similar_players")
-            if tool:
-                return str(tool.invoke(self._extract_similar_player(user_input)))
-
-        if any(w in q for w in ["archetype", "profile", "type of player", "what type", "ארכיטיפ", "פרופיל"]):
+        if any(w in q for w in ["archetype", "type of player", "what type", "ארכיטיפ"]):
             tool = self.tool_map.get("get_player_archetype")
             if tool:
                 player = self._extract_after_keywords(user_input, [
@@ -278,10 +296,31 @@ class ScoutAgent:
             if tool:
                 return str(tool.invoke(user_input))
 
-        if self._looks_like_scout_query(user_input):
-            tool = self.tool_map.get("scout_players")
+        # Scouting: parse intent + entities and route to the matching scouting tool.
+        ctx = parse_scouting_query(user_input)
+        ref = ctx.get("reference_player")
+        if ctx["intent"] == "replacement" and ref:
+            tool = self.tool_map.get("find_replacement")
             if tool:
-                return str(tool.invoke(user_input))
+                return str(tool.invoke({"player_name": ref, "club": ctx.get("club", ""),
+                                        "max_age": ctx.get("age_max", 0)}))
+        if ctx["intent"] == "similar" and ref:
+            tool = self.tool_map.get("find_similar_player")
+            if tool:
+                return str(tool.invoke(ref))
+        if ctx["intent"] == "wonderkid":
+            tool = self.tool_map.get("find_wonderkids")
+            if tool:
+                return str(tool.invoke({"role": ctx["role"], "max_age": ctx["age_max"] or 21,
+                                        "min_potential": ctx["potential_min"] or 80,
+                                        "important_features": ",".join(ctx["important_features"])}))
+        if self._looks_like_scout_query(user_input) or ctx["role"] or ctx["important_features"]:
+            tool = self.tool_map.get("search_by_profile")
+            if tool:
+                return str(tool.invoke({"role": ctx["role"], "max_age": ctx["age_max"],
+                                        "min_potential": ctx["potential_min"],
+                                        "important_features": ",".join(ctx["important_features"]),
+                                        "description": user_input}))
 
         return None
 
@@ -382,7 +421,10 @@ class ScoutAgent:
                             result = fn.invoke(args)
                     except Exception as e:
                         result = f"Error running {name}: {e}"
-                print(f"[agent] tool={name} | args={args}", flush=True)
+                try:
+                    print(f"[agent] tool={name} | args={args}", flush=True)
+                except Exception:
+                    pass  # never let a debug log line break a user request
                 messages.append(ToolMessage(content=str(result), tool_call_id=tool_id))
 
         # Hit the iteration cap without a final answer — fall back to the deterministic router.
@@ -408,13 +450,17 @@ def build_agent(engine, national_strength, schedule):
 
     club_model = ClubModel()
     if club_model.ok:
-        print(f"[agent] Club model ready: {len(club_model.factors)} clubs.", flush=True)
+        print(f"[agent] Club model (Poisson) ready: {len(club_model.factors)} clubs.", flush=True)
     else:
         print("[agent] Club model unavailable (data/club_matches.csv missing).", flush=True)
 
+    pred_engine = PredictionEngine()
+    scout = ScoutingEngine(engine)
+    print(f"[agent] Scouting engine ready: {len(scout.pool)} players with real attributes.", flush=True)
+
     tools = [
-        make_find_similar_players_tool(engine),
-        make_scout_players_tool(engine, wc_nations),
+        *make_prediction_tools(pred_engine),
+        *make_scouting_tools(scout),
         make_get_player_archetype_tool(engine),
         make_detect_anomalies_tool(engine),
         make_compare_players_jaccard_tool(engine),
