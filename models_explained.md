@@ -167,4 +167,4 @@ Method: Logistic regression or softmax model on team-form and squad-strength fea
 | "What archetype is X?" | `get_player_archetype` | K-Means clustering |
 | "Find anomalies" | `detect_anomalies` | Z-score |
 | "Compare X and Y" | `compare_players_jaccard` | Jaccard similarity |
-| "Predict X vs Y" | `predict_match` | Logistic/softmax prediction |
+| "Predict X vs Y" | `predict_match` | Logistic/softmax prediction |ך

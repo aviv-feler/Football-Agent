@@ -3,8 +3,34 @@ TOOL 5 - Compare two players with Jaccard similarity.
 Method: Jaccard similarity on categorical trait sets.
 """
 
+import pandas as pd
 from langchain.tools import tool
 from ds_engine import jaccard
+
+
+def _num(value, default=0):
+    """Safe numeric read (treats NaN/None as the default)."""
+    try:
+        return default if value is None or pd.isna(value) else value
+    except Exception:
+        return default
+
+
+def _stat_line(row) -> str:
+    age = int(_num(row.get("age")))
+    goals = int(_num(row.get("goals")))
+    assists = int(_num(row.get("assists")))
+    minutes = int(_num(row.get("minutes_played")))
+    value = int(_num(row.get("market_value_in_eur")))
+    parts = [
+        f"age {age}", f"goals {goals}", f"assists {assists}",
+        f"minutes {minutes:,}", f"value EUR {value:,}",
+        f"archetype {row.get('archetype', '?')}",
+    ]
+    ovr, pot = _num(row.get("fc_overall")), _num(row.get("fc_potential"))
+    if ovr:
+        parts.append(f"FC26 {int(ovr)} (pot {int(pot)})")
+    return ", ".join(parts)
 
 
 def make_compare_players_jaccard_tool(engine):
@@ -51,7 +77,10 @@ def make_compare_players_jaccard_tool(engine):
             f"- Shared traits: {', '.join(shared) if shared else 'none'}",
             f"- Unique to {r1['player_name']}: {', '.join(only1) if only1 else 'none'}",
             f"- Unique to {r2['player_name']}: {', '.join(only2) if only2 else 'none'}",
-            f"\n🔍 Method: Jaccard similarity on categorical trait sets.",
+            "\n**Stats side by side:**",
+            f"- {r1['player_name']}: {_stat_line(r1)}",
+            f"- {r2['player_name']}: {_stat_line(r2)}",
+            "\n🔍 Method: Jaccard similarity on categorical trait sets (+ raw stat comparison).",
         ]
         return "\n".join(lines)
 
