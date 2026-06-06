@@ -17,6 +17,7 @@ import pickle
 import numpy as np
 
 from team_strength import (FEATURES, canonical_nation, match_diff, goal_feats)
+from viz import embed_viz
 
 MODEL_PKL = "predictor_model.pkl"
 _MAX_G = 7
@@ -105,6 +106,8 @@ class MatchPredictor:
             "outcome": outcome, "outcome_label": label,
             "confidence": self._confidence(p_win, p_draw, p_loss),
             "factors": self._factors(team1, team2, ra, rb),
+            "feat_a": {f: float(ra[f]) for f in FEATURES} if ra is not None else None,
+            "feat_b": {f: float(rb[f]) for f in FEATURES} if rb is not None else None,
             "trained_at": self.trained_at, "n_train": self.n_train,
         }
 
@@ -144,6 +147,28 @@ class MatchPredictor:
         return f[:4]
 
 
+def _match_viz(p: dict) -> dict:
+    """Structured payload for the in-chat Match Prediction card."""
+    import math as _m
+    viz = {
+        "type": "match_pred",
+        "a": p["team_a"], "b": p["team_b"],
+        "score": [int(p["score"][0]), int(p["score"][1])],
+        "p": [round(p["p_win"] * 100), round(p["p_draw"] * 100), round(p["p_loss"] * 100)],
+        "xg": [round(p["xg_a"], 2), round(p["xg_b"], 2)],
+        "winner": p["outcome_label"], "conf": p["confidence"], "neutral": True,
+    }
+    fa, fb = p.get("feat_a"), p.get("feat_b")
+    if fa and fb:
+        viz["compare"] = [
+            {"k": "Squad value", "a": _m.expm1(fa["value_xi_log"]), "b": _m.expm1(fb["value_xi_log"])},
+            {"k": "Rating",      "a": fa["rating_mean"],            "b": fb["rating_mean"]},
+            {"k": "Attack",      "a": fa["attack"],                 "b": fb["attack"]},
+            {"k": "Defense",     "a": fa["defense"],                "b": fb["defense"]},
+        ]
+    return viz
+
+
 def format_prediction(p: dict) -> str:
     """Markdown card for a single head-to-head prediction (shared by the tools)."""
     a, b = p["team_a"], p["team_b"]
@@ -162,4 +187,4 @@ def format_prediction(p: dict) -> str:
     lines.append("\n🔍 Method: Logistic Regression on squad-strength features (starting-XI market "
                  "value, average squad rating, attack vs defense), trained on historical "
                  "international match results.")
-    return "\n".join(lines)
+    return embed_viz("\n".join(lines), _match_viz(p))

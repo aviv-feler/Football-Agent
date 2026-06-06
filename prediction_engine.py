@@ -650,7 +650,12 @@ def _fmt_top_scorer(p: dict) -> str:
                  "injuries, or team changes are not modelled._")
     lines.append(f"\n🔍 Method: RandomForest regressor trained on current-season player attributes "
                  "→ goals. Ranked by projected_goals_next_season.")
-    return "\n".join(lines)
+    from viz import embed_viz
+    viz = {"type": "ranking", "title": f"Projected top scorers — {p.get('scope', 'top-5 leagues')}",
+           "unit": "goals",
+           "items": [{"name": c["player_name"], "value": round(float(c["projected_goals"])), "sub": c["club"]}
+                     for c in p["candidates"][:6]]}
+    return embed_viz("\n".join(lines), viz)
 
 
 def _fmt_player_goals(p: dict) -> str:

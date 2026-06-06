@@ -442,4 +442,20 @@ def generate_scouting_response(result: dict) -> str:
         "wonderkid": "Age/potential filter + role-weighted profile similarity, potential-led multi-factor ranking.",
     }.get(t, "Weighted similarity ranking.")
     lines.append(f"\n🔍 Method: {method}")
-    return "\n".join(lines)
+    from viz import embed_viz
+    title = {
+        "similar":     f"Most similar to {result.get('reference')}",
+        "replacement": f"Replacements for {result.get('reference')}",
+        "profile":     f"Profile matches — {result.get('role')}",
+        "wonderkid":   f"Top wonderkids — {result.get('role')}",
+    }.get(t, "Scouting results")
+    use_sim = (t == "similar")
+    items = [{
+        "name": c["player_name"],
+        "pct": float(c["similarity"] if use_sim else c["fit"]),
+        "pos": c["position"],
+        "sub": c.get("club") or "",
+        "tags": (c.get("strengths") or [])[:3],
+    } for c in result["candidates"][:5]]
+    viz = {"type": "similarity", "title": title, "metric": "match" if use_sim else "fit", "items": items}
+    return embed_viz("\n".join(lines), viz)

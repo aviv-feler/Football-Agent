@@ -33,6 +33,7 @@ from club_model import ClubModel
 from prediction_engine import PredictionEngine, parse_prediction_query
 from wc_predictor import WCPredictor
 from match_predictor import MatchPredictor
+from viz import split_viz
 
 DATA_CSV     = "data/players_clean.csv"
 WC_CSV       = "data/fwc26_match_schedule_agent.csv"
@@ -43,27 +44,39 @@ SYSTEM_PROMPT = """You are FOOTBOT, an elite AI football intelligence platform b
 You have a database of ~48,000 players, 10 seasons of top-5 league results, and a full FIFA World Cup 2026 prediction engine.
 
 YOUR ROLE:
-You are a knowledgeable football analyst having a real conversation with the user — not a command executor.
-You think, reason, and give opinions grounded in data. You don't just route questions to functions.
+You are a knowledgeable football analyst. You reason over real data — but every factual
+claim comes from a tool, never from memory.
 
 HOW TO THINK:
 1. Understand what the user actually wants to know.
-2. Decide which tools (if any) will give you useful data to reason with. Call one or more.
-3. Use the tool results as evidence. Reason across them. Then answer like an analyst would.
-4. If no single tool perfectly answers the question, combine multiple tools or use the data
-   you have to reason toward the best answer. Never refuse just because there's no exact tool match.
-5. For conversational football questions (tactics, opinions, comparisons, "what do you think about X"),
-   you may answer using your football knowledge — grounded in any tool data you have available.
+2. FACTS REQUIRE TOOLS. For ANY factual question — results, standings, who won/champion,
+   top scorers, fixtures, player stats, current club, squads, predictions, similar players,
+   archetypes — you MUST call the matching tool and base your answer ONLY on its output.
+   NEVER answer these from your own training memory: it is outdated and will be wrong.
+   This rule is the same in EVERY language (Hebrew included). If unsure which tool, pick the
+   closest one and call it — do not guess from memory.
+3. NORMALIZE ENTITIES TO CANONICAL ENGLISH before every tool call, whatever language the
+   user wrote in — tools only understand English names:
+   • "הליגה האנגלית" / "פריימר ליג" / "ליגה אנגלית" / "אליפות אנגליה" → "Premier League"
+   • "לה ליגה"→"La Liga", "סדרה א"→"Serie A", "בונדסליגה"→"Bundesliga", "ליגה 1"→"Ligue 1"
+   • "ריאל מדריד"→"Real Madrid", "ברצלונה"/"barca"→"Barcelona", "מבאפה"/"mbape"→"Kylian Mbappé"
+   • "מי זכתה באליפות הליגה האנגלית?" → call get_live_standings("Premier League") and report the leader.
+4. Call each tool AT MOST ONCE per question. Do NOT call two overlapping tools for the same
+   thing (use predict_wc_match OR predict_match, not both; call get_national_squad once).
+5. Use your own football knowledge ONLY for opinion/tactics/history questions
+   ("what do you think about X", playing style) — NEVER for live facts, results, or stats.
 
-TONE:
-- Confident and decisive. Give real opinions and verdicts, not hedges.
-- Specific: cite numbers, percentages, scores from tool data wherever possible.
-- Conversational but sharp — like a football analyst on a podcast.
-- Structure longer answers with bold headers or bullet points for readability.
-- Never say "I cannot answer" when you have relevant data or football knowledge to reason with.
+TONE & LENGTH:
+- Confident and decisive — give a clear verdict, no hedging.
+- BE CONCISE and FAST. A visual CARD is shown automatically for match predictions,
+  top-scorer/rankings, similar-player lists, and player profiles. For those answers, write
+  only 1–3 sentences of insight and DO NOT re-list the numbers (score, %, xG, attributes,
+  ranks) — the card already shows them. Repeating them makes the reply slow and cluttered.
+- For everything else, keep it tight; use short bullets only when they genuinely help.
+- Never say "I cannot answer" — if it's factual, call the right tool instead.
 
-LANGUAGE: ALWAYS respond in the SAME language the user wrote in.
-Hebrew → full Hebrew. English → full English.
+LANGUAGE: respond in the SAME language the user wrote in (Hebrew → full Hebrew, English →
+full English), but ALWAYS pass canonical ENGLISH entity names to tools.
 
 TOOLS — use them to gather data, then reason:
 PREDICTION:
@@ -95,9 +108,9 @@ TOOL STRATEGY:
   national-team PLAYER play for now?" → call get_national_squad(X).
 - For LIVE standings/scorers this season → prefer get_live_standings / get_top_scorers.
 - For predictions, scouting, analysis → use the DS model tools.
-- For broad questions ("who is the best striker?", "who will win WC?") → call 1–2 relevant tools,
-  then synthesise the data into a real answer with your reasoning on top.
-- Correct typos/nicknames before any tool call: "mbape"→"Kylian Mbappé", "barca"→"Barcelona".
+- For broad questions ("who is the best striker?", "who will win WC?") → call ONE relevant tool,
+  then add a short reasoned takeaway on top (don't re-list what the card shows).
+- "who won the league / מי זכתה" → get_live_standings(<league in English>) and report the leader.
 
 DATA SOURCES & ATTRIBUTION (be honest — never claim a source you didn't use):
 - football-data.org is used ONLY by get_live_standings and get_top_scorers. NEVER cite
@@ -225,6 +238,26 @@ class ScoutAgent:
                 return m.group(1).strip(" ?.,:;\"'")
         return q
 
+    # Canonical English league name → its English + Hebrew aliases (for normalization).
+    _LEAGUE_ALIASES = {
+        "Premier League": ["premier league", "epl", "english league", "הליגה האנגלית",
+                           "ליגה אנגלית", "פריימר ליג", "פרמייר ליג", "אליפות אנגליה"],
+        "La Liga":        ["la liga", "לה ליגה", "הליגה הספרדית", "ליגה ספרדית"],
+        "Serie A":        ["serie a", "סריה א", "סדרה א", "ליגה איטלקית"],
+        "Bundesliga":     ["bundesliga", "בונדסליגה", "ליגה גרמנית"],
+        "Ligue 1":        ["ligue 1", "ליגה צרפתית"],
+        "Champions League": ["champions league", "ליגת האלופות"],
+    }
+
+    @classmethod
+    def _detect_competition(cls, text: str) -> str:
+        """Map a query (any language) to a canonical English league name, or ''."""
+        q = text.lower()
+        for canon, aliases in cls._LEAGUE_ALIASES.items():
+            if any(a in q for a in aliases):
+                return canon
+        return ""
+
     @staticmethod
     def _extract_after_keywords(text: str, patterns: list[str]) -> str:
         q = text.strip()
@@ -316,10 +349,16 @@ class ScoutAgent:
                 ])
                 return str(tool.invoke(competition))
 
-        if any(w in q for w in ["standings", "table", "league table", "טבלה"]):
+        # Standings / "who won the league / champion" — incl. Hebrew. Only treat champion
+        # wording as a standings lookup when a specific league is detected (so "who wins the
+        # World Cup" isn't misrouted here).
+        comp = self._detect_competition(user_input)
+        champion_words = ["who won", "champion", "winner", "won the", "אליפות", "אלופ", "זכת", "ניצח"]
+        if any(w in q for w in ["standings", "table", "league table", "טבלה"]) or \
+           (comp and any(w in q for w in champion_words)):
             tool = self.tool_map.get("get_live_standings")
             if tool:
-                competition = self._extract_after_keywords(user_input, [
+                competition = comp or self._extract_after_keywords(user_input, [
                     r"standings\s+(?:for|of|in)?\s*(.+)$",
                     r"table\s+(?:for|of|in)?\s*(.+)$",
                     r"league\s+table\s+(?:for|of|in)?\s*(.+)$",
@@ -402,8 +441,12 @@ class ScoutAgent:
             except Exception as e:
                 last_err = e
                 msg = str(e)
-                if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
-                    print(f"[agent] Model {MODEL_CHAIN[idx]} hit quota; rotating.", flush=True)
+                # Quota (429) OR transient unavailability (503/500/overloaded) → rotate to
+                # the next model instead of failing the whole request.
+                low = msg.lower()
+                if ("429" in msg or "RESOURCE_EXHAUSTED" in msg or "503" in msg or "500" in msg
+                        or "unavailable" in low or "overloaded" in low or "high demand" in low):
+                    print(f"[agent] Model {MODEL_CHAIN[idx]} unavailable/quota ({msg[:50]}); rotating.", flush=True)
                     continue
                 # Non-quota rejection (e.g. Gemini 2.5 cross-model thought_signature mismatch
                 # when a tool call from one model is replayed to another). Don't keep feeding
@@ -424,10 +467,10 @@ class ScoutAgent:
                 return "Hebrew"
         return "English"
 
-    def _run_tool_loop(self, messages: list, user_input: str) -> str | None:
+    def _run_tool_loop(self, messages: list, user_input: str, viz_box: list) -> str | None:
         """Run the reason→tool-call→narrate loop. Returns the final answer, or None
-        if the iteration cap is hit without one. May raise _QuotaExhausted /
-        _RecoverableModelError from _call_llm."""
+        if the iteration cap is hit without one. Collects any structured viz payloads
+        emitted by tools into viz_box. May raise _QuotaExhausted / _RecoverableModelError."""
         for _ in range(self.MAX_ITERATIONS):
             response = self._call_llm(messages)
             messages.append(response)
@@ -457,19 +500,28 @@ class ScoutAgent:
                             result = fn.invoke(args)
                     except Exception as e:
                         result = f"Error running {name}: {e}"
+                # Strip any viz payload so the LLM narrates clean text; keep it for the UI.
+                clean, viz = split_viz(str(result))
+                if viz:
+                    viz_box.append(viz)
                 try:
                     print(f"[agent] tool={name} | args={args}", flush=True)
                 except Exception:
                     pass  # never let a debug log line break a user request
-                messages.append(ToolMessage(content=str(result), tool_call_id=tool_id))
+                messages.append(ToolMessage(content=clean, tool_call_id=tool_id))
         return None
 
-    def invoke(self, user_input: str, session_id: str = "default") -> str:
+    @staticmethod
+    def _pick_viz(viz_box: list):
+        return viz_box[-1] if viz_box else None
+
+    def invoke(self, user_input: str, session_id: str = "default") -> tuple[str, dict | None]:
         # Gemini-first: the model reasons over the conversation and decides which tools to
         # call (including the live football-data.org API tools), then writes a smart answer
         # in the user's language. The deterministic keyword router (_direct_tool_answer) is
         # kept only as a fallback for when the LLM is unavailable (e.g. quota exhausted), so
         # the agent still responds with real model output instead of an error.
+        # Returns (answer_text, viz_payload_or_None); viz drives an in-chat visual card.
         lang = self._detect_language(user_input)
         lang_directive = SystemMessage(content=(
             f"LANGUAGE RULE: The user's message is written in {lang}. "
@@ -482,32 +534,39 @@ class ScoutAgent:
         base = [self.system_msg, *history, lang_directive, HumanMessage(content=user_input)]
 
         quota_hit = False
+        viz_box: list = []
         # Each restart begins from a clean copy of `base`, so a model that chokes on
         # another model's tool-call history never poisons the retry.
         for _restart in range(len(self.llms)):
+            viz_box = []
             try:
-                answer = self._run_tool_loop(list(base), user_input)
+                answer = self._run_tool_loop(list(base), user_input, viz_box)
             except _QuotaExhausted:
                 quota_hit = True
                 break
             except _RecoverableModelError:
                 continue  # _call_llm already advanced model_idx; retry the turn cleanly
             if answer is not None:
+                # The final answer is normally clean LLM prose; split_viz also covers the
+                # "No response → deterministic fallback" case where a marker slips through.
+                answer, inline_viz = split_viz(answer)
+                viz = inline_viz or self._pick_viz(viz_box)
                 self._remember(session_id, user_input, answer)
-                return answer
+                return answer, viz
             break  # iteration cap reached — drop to the deterministic fallback
 
         # No clean LLM answer — fall back to the deterministic router.
         fallback = self._direct_tool_answer(user_input)
         if fallback:
-            self._remember(session_id, user_input, fallback)
-            return fallback
+            clean, viz = split_viz(fallback)
+            self._remember(session_id, user_input, clean)
+            return clean, viz
         if quota_hit:
             return ("ScoutAI has reached today's free Gemini quota and this question "
                     "needs the language model. The quota resets daily — please try "
                     "again later, or ask directly for similar players, a scouting "
-                    "list, a prediction, standings, or top scorers.")
-        return "I couldn't complete that — try asking a more focused question."
+                    "list, a prediction, standings, or top scorers.", None)
+        return "I couldn't complete that — try asking a more focused question.", None
 
 
 def build_agent(engine, national_strength, schedule):

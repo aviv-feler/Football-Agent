@@ -325,8 +325,11 @@
   .glass-card:hover { transform: translateY(-4px); border-color: rgba(120,160,255,.28); box-shadow: var(--shadow-lg), var(--edge-strong); }
   .glass-card:hover::before { opacity: 1; }
   .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
-  .card-icon { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; background: var(--grad-soft); border: 1px solid var(--border-2); box-shadow: var(--edge), 0 0 16px -6px var(--glow-blue); }
+  .card-icon { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; background: var(--grad-soft); border: 1px solid var(--border-2); box-shadow: var(--edge), 0 0 16px -6px var(--glow-blue); flex-shrink: 0; }
   .card-icon svg { width: 16px; height: 16px; color: var(--blue-bright); }
+  /* Real competition/team logo inside the icon box (replaces the placeholder SVG). */
+  .card-icon.logo { background: rgba(255,255,255,.05); border-color: var(--hairline); box-shadow: var(--edge); }
+  .card-icon.logo img { width: 24px; height: 24px; object-fit: contain; transition: opacity .28s var(--ease); }
   .card-kicker { font-size: .64rem; letter-spacing: 1.8px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; }
   .card-title { font-family: var(--font-disp); font-weight: 600; font-size: 1.06rem; letter-spacing: -.2px; margin-top: 1px; }
   .card-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; font-size: .9rem; border-top: 1px solid var(--hairline); }
@@ -352,6 +355,97 @@
   @keyframes shimmer { 0% { transform: translateX(-100%); } 60%,100% { transform: translateX(220%); } }
   .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .tag { font-size: .72rem; color: var(--text-muted); background: var(--glass); border: 1px solid var(--border); border-radius: 7px; padding: 4px 9px; box-shadow: var(--edge); }
+
+  /* ── Clickable opening preview cards (league carousel + WC next match) ── */
+  .preview-card { cursor: pointer; transition: transform .18s var(--ease), box-shadow .18s var(--ease), border-color .18s var(--ease); }
+  .preview-card:hover { transform: translateY(-3px); border-color: var(--hairline-bright, rgba(255,255,255,.18)); box-shadow: var(--shadow-lg); }
+  .preview-card:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .card-head { display: flex; align-items: center; gap: 10px; }
+  .card-head-text { min-width: 0; flex: 1; }
+  .card-head-text .card-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* League emblem + crests */
+  .lg-emblem { width: 26px; height: 26px; object-fit: contain; margin-left: auto; flex-shrink: 0;
+               filter: drop-shadow(0 1px 4px rgba(0,0,0,.4)); transition: opacity .3s var(--ease); }
+  .lg-viewport { margin-top: 10px; min-height: 156px; }   /* reserve height → no layout jump */
+  .lg-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px;
+             transition: opacity .28s var(--ease), transform .28s var(--ease); }
+  .lg-rows.swapping { opacity: 0; transform: translateY(6px); }
+  .lg-row { display: flex; align-items: center; gap: 10px; padding: 5px 6px; border-radius: 8px;
+            font-size: .82rem; min-height: 28px; }
+  .lg-row + .lg-row { border-top: 1px solid var(--hairline); }
+  .lg-row .lg-pos { width: 16px; text-align: center; font-family: var(--font-mono); font-size: .76rem; color: var(--text-dim); }
+  .lg-row .lg-crest { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; }
+  .lg-row .lg-team { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+  .lg-row .lg-pts { font-family: var(--font-mono); font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+  .lg-row .lg-pts small { color: var(--text-dim); font-weight: 400; font-size: .7em; margin-left: 2px; }
+  .lg-row:first-child .lg-pts { color: var(--green); }
+  .lg-row.lg-skel { background: linear-gradient(90deg, rgba(255,255,255,.03), rgba(255,255,255,.07), rgba(255,255,255,.03)); background-size: 200% 100%; animation: shimmer 1.6s linear infinite; height: 28px; }
+  .lg-dots { display: flex; justify-content: center; gap: 7px; margin-top: 12px; }
+  .lg-dots button { width: 7px; height: 7px; padding: 0; border-radius: 50%; border: none; cursor: pointer;
+                    background: var(--text-dim); opacity: .4; transition: all .25s var(--ease); }
+  .lg-dots button.active { opacity: 1; width: 18px; border-radius: 4px; background: var(--blue); }
+  @media (prefers-reduced-motion: reduce) { .lg-rows, .lg-row.lg-skel { transition: none; animation: none; } }
+
+  /* ════════ In-chat visual cards (viz) ════════ */
+  .viz-card { margin-top: 12px; padding: 12px 13px; border-radius: 14px; background: var(--glass);
+              border: 1px solid var(--hairline); box-shadow: var(--edge); font-variant-numeric: tabular-nums;
+              animation: fadeIn .35s var(--ease) both; }
+  .viz-title { font-size: .66rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); font-weight: 600; margin-bottom: 9px; }
+
+  /* match prediction */
+  .vp-teams { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .vp-team { display: flex; align-items: center; gap: 7px; font-size: .9rem; min-width: 0; flex: 1; }
+  .vp-team.r { justify-content: flex-end; }
+  .vp-team b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  .vp-team .flag, .vp-team img { width: 26px; height: 19px; border-radius: 3px; flex-shrink: 0; }
+  .vp-score { font-family: var(--font-mono); font-size: 1.3rem; font-weight: 700; letter-spacing: 1px; flex-shrink: 0; }
+  .vp-score small { color: var(--text-dim); margin: 0 3px; }
+  .vp-bar { display: flex; height: 9px; border-radius: 6px; overflow: hidden; margin: 11px 0 7px; background: rgba(255,255,255,.05); }
+  .vp-bar .seg.win { background: var(--blue); } .vp-bar .seg.draw { background: var(--text-dim); } .vp-bar .seg.loss { background: var(--violet); }
+  .vp-legend { display: flex; justify-content: space-between; font-size: .72rem; gap: 6px; }
+  .vp-legend .lg { color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vp-legend .lg::before { content:''; display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align: middle; }
+  .vp-legend .win::before { background: var(--blue); } .vp-legend .draw::before { background: var(--text-dim); } .vp-legend .loss::before { background: var(--violet); }
+  .vp-xg { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: .76rem; color: var(--text-muted); font-family: var(--font-mono); }
+  .vp-xg > span:first-child { color: var(--text-dim); }
+  .vp-conf { margin-left: auto; color: var(--text-dim); font-size: .72rem; }
+  .vp-compare { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 6px; }
+  .cmp-row { display: grid; grid-template-columns: 1fr 92px 1fr; align-items: center; gap: 8px; }
+  .cmp-k { font-size: .67rem; color: var(--text-dim); text-align: center; white-space: nowrap; }
+  .cmp-side { height: 6px; background: rgba(255,255,255,.06); border-radius: 4px; position: relative; }
+  .cmp-side i { position: absolute; top: 0; bottom: 0; right: 0; background: var(--blue); border-radius: 4px; }
+  .cmp-side.r i { left: 0; right: auto; background: var(--violet); }
+
+  /* ranking + similarity bars */
+  .rk-row { display: grid; grid-template-columns: 1.1fr 1.3fr auto; align-items: center; gap: 10px; padding: 4px 0; font-size: .82rem; }
+  .rk-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rk-name small { color: var(--text-dim); margin-left: 6px; font-size: .82em; }
+  .rk-track, .sm-track { height: 8px; background: rgba(255,255,255,.05); border-radius: 5px; overflow: hidden; }
+  .rk-track i, .sm-track i { display: block; height: 100%; border-radius: 5px; background: linear-gradient(90deg, var(--blue), var(--cyan)); }
+  .rk-row:first-of-type .rk-track i { background: linear-gradient(90deg, var(--green), var(--cyan)); }
+  .rk-val, .sm-val { font-family: var(--font-mono); font-weight: 600; color: var(--text); }
+  .sm-item { padding: 7px 0; border-bottom: 1px solid var(--hairline); }
+  .sm-item:last-child { border-bottom: none; }
+  .sm-row { display: grid; grid-template-columns: 1.1fr 1.3fr auto; align-items: center; gap: 10px; font-size: .82rem; }
+  .sm-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sm-name small { color: var(--text-dim); margin-left: 6px; font-size: .82em; }
+  .sm-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .sm-tags em { font-style: normal; font-size: .67rem; color: var(--text-muted); background: var(--glass); border: 1px solid var(--border); border-radius: 6px; padding: 2px 7px; }
+
+  /* player profile */
+  .pf-head { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
+  .pf-mono { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-family: var(--font-mono); font-weight: 700; font-size: .9rem; color: var(--blue-bright); background: var(--grad-soft); border: 1px solid var(--border-2); flex-shrink: 0; }
+  .pf-name { font-weight: 600; }
+  .pf-sub { font-size: .74rem; color: var(--text-dim); }
+  .pf-arch { margin-left: auto; font-size: .67rem; color: var(--violet-soft); background: rgba(155,107,255,.12); border: 1px solid rgba(155,107,255,.4); border-radius: 14px; padding: 3px 9px; white-space: nowrap; }
+  .pf-attrs { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 14px; }
+  .pf-attr { display: grid; grid-template-columns: 58px 1fr 22px; align-items: center; gap: 7px; }
+  .pf-k { font-size: .72rem; color: var(--text-muted); }
+  .pf-track { height: 6px; background: rgba(255,255,255,.05); border-radius: 4px; overflow: hidden; }
+  .pf-track i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--blue), var(--violet)); }
+  .pf-v { font-family: var(--font-mono); font-size: .74rem; color: var(--text); text-align: right; }
+  @media (max-width: 480px) { .pf-attrs { grid-template-columns: 1fr; } .cmp-row { grid-template-columns: 1fr 78px 1fr; } }
 
   @keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -730,11 +824,35 @@
             <p>Scout players. Predict matches. Understand football through data.</p>
 
             <div class="showcase">
-              <!-- WC 2026 live prediction widget -->
-              <div class="glass-card" id="wc-card">
+              <!-- ── Card 1: Top-5 league table carousel ── -->
+              <div class="glass-card preview-card" id="lg-card" role="button" tabindex="0"
+                   aria-label="League tables snapshot — click to open the current table">
                 <div class="card-head">
-                  <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-                  <div><div class="card-kicker" id="wc-kicker">World Cup 2026</div><div class="card-title" id="wc-title">Loading fixture…</div></div>
+                  <div class="card-icon logo"><img id="lg-logo" alt="" aria-hidden="true"></div>
+                  <div class="card-head-text">
+                    <div class="card-kicker">League Tables · Snapshot</div>
+                    <div class="card-title lg-name" id="lg-name">Loading tables…</div>
+                  </div>
+                </div>
+                <div class="lg-viewport">
+                  <ol class="lg-rows" id="lg-rows" aria-live="polite">
+                    <li class="lg-row lg-skel"></li><li class="lg-row lg-skel"></li>
+                    <li class="lg-row lg-skel"></li><li class="lg-row lg-skel"></li>
+                    <li class="lg-row lg-skel"></li>
+                  </ol>
+                </div>
+                <div class="lg-dots" id="lg-dots" aria-hidden="true"></div>
+              </div>
+
+              <!-- ── Card 2: World Cup 2026 next-match prediction ── -->
+              <div class="glass-card preview-card" id="wc-card" role="button" tabindex="0"
+                   aria-label="World Cup 2026 next match prediction — click for the full prediction">
+                <div class="card-head">
+                  <div class="card-icon logo"><img src="{{ url_for('static', filename='logos/competitions/fifa-world-cup.png') }}" alt="FIFA World Cup 2026"></div>
+                  <div class="card-head-text">
+                    <div class="card-kicker" id="wc-kicker">World Cup 2026 · Next Match</div>
+                    <div class="card-title" id="wc-title">Loading fixture…</div>
+                  </div>
                 </div>
                 <div class="vs-line" id="wc-vs">
                   <span id="wc-flag-home" class="flag-slot"><span class="flag-unknown"></span></span>
@@ -746,19 +864,6 @@
                 <div class="card-row"><span class="k">Predicted winner</span><span class="v" id="wc-winner">–</span></div>
                 <div class="card-row"><span class="k">Win probability</span><span class="v" id="wc-conf">–</span></div>
                 <div class="card-row"><span class="k">Date</span><span class="v" id="wc-date">–</span></div>
-              </div>
-
-              <!-- Scouting showcase -->
-              <div class="glass-card">
-                <div class="card-head">
-                  <div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></div>
-                  <div><div class="card-kicker">Scouting Fit</div><div class="card-title">Haaland-style striker</div></div>
-                </div>
-                <div class="card-row" style="border:none"><span class="k">Best fit</span><span class="v">A. Kovačević</span></div>
-                <div class="card-row" style="border:none; padding-top:0"><span class="k">Fit score</span><span class="v badge green">87%</span></div>
-                <div class="fit-bar"><span style="width:87%"></span></div>
-                <div class="card-row" style="border:none; margin-top:8px"><span class="k">Role</span><span class="v">Target Striker</span></div>
-                <div class="tags"><span class="tag">Finishing</span><span class="tag">Aerial</span><span class="tag">Pressing</span></div>
               </div>
             </div>
           </div>
@@ -913,7 +1018,80 @@
     return [...found].slice(0, 4);
   }
 
-  function appendMsg(role, text) {
+  /* ── In-chat visual cards (rendered from the out-of-band `viz` payload) ──── */
+  function elFrom(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild; }
+  const _esc = s => escapeHTML(String(s == null ? '' : s));
+
+  function vizMatch(v) {
+    const [sh, sa] = v.score, [pw, pd, pl] = v.p;
+    const cmp = (v.compare || []).map(r => {
+      const mx = Math.max(r.a, r.b) || 1;
+      return `<div class="cmp-row">
+        <span class="cmp-side"><i style="width:${(r.a / mx * 100).toFixed(0)}%"></i></span>
+        <span class="cmp-k">${_esc(r.k)}</span>
+        <span class="cmp-side r"><i style="width:${(r.b / mx * 100).toFixed(0)}%"></i></span></div>`;
+    }).join('');
+    return elFrom(`<div class="viz-card vp">
+      <div class="vp-teams">
+        <span class="vp-team">${getFlag(v.a)}<b>${_esc(v.a)}</b></span>
+        <span class="vp-score">${sh}<small>–</small>${sa}</span>
+        <span class="vp-team r"><b>${_esc(v.b)}</b>${getFlag(v.b)}</span>
+      </div>
+      <div class="vp-bar"><div class="seg win" style="width:${pw}%"></div><div class="seg draw" style="width:${pd}%"></div><div class="seg loss" style="width:${pl}%"></div></div>
+      <div class="vp-legend"><span class="lg win">${_esc(v.a)} ${pw}%</span><span class="lg draw">Draw ${pd}%</span><span class="lg loss">${_esc(v.b)} ${pl}%</span></div>
+      <div class="vp-xg"><span>xG</span><b>${v.xg[0]}</b>·<b>${v.xg[1]}</b><span class="vp-conf">${_esc(v.winner)} · ${_esc(v.conf)} confidence</span></div>
+      ${cmp ? `<div class="vp-compare">${cmp}</div>` : ''}
+    </div>`);
+  }
+
+  function vizRanking(v) {
+    const mx = Math.max(...v.items.map(i => i.value)) || 1;
+    const rows = v.items.map(it => `<div class="rk-row">
+      <span class="rk-name">${_esc(it.name)}${it.sub ? `<small>${_esc(it.sub)}</small>` : ''}</span>
+      <span class="rk-track"><i style="width:${Math.max(6, it.value / mx * 100).toFixed(0)}%"></i></span>
+      <span class="rk-val">${it.value}</span></div>`).join('');
+    return elFrom(`<div class="viz-card rk"><div class="viz-title">${_esc(v.title)}</div>${rows}</div>`);
+  }
+
+  function vizSimilarity(v) {
+    const rows = v.items.map(it => `<div class="sm-item">
+      <div class="sm-row">
+        <span class="sm-name">${_esc(it.name)}${it.pos ? `<small>${_esc(it.pos)}</small>` : ''}</span>
+        <span class="sm-track"><i style="width:${Math.max(5, Math.min(100, it.pct))}%"></i></span>
+        <span class="sm-val">${Number(it.pct).toFixed(1)}%</span>
+      </div>
+      ${(it.tags && it.tags.length) ? `<div class="sm-tags">${it.tags.map(t => `<em>${_esc(t)}</em>`).join('')}</div>` : ''}
+    </div>`).join('');
+    return elFrom(`<div class="viz-card sm"><div class="viz-title">${_esc(v.title)}</div>${rows}</div>`);
+  }
+
+  function vizProfile(v) {
+    const sub = [v.pos, v.nat, v.club].filter(Boolean).map(_esc).join(' · ');
+    const initials = String(v.name).split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+    const bars = (v.attrs || []).map(a => `<div class="pf-attr">
+      <span class="pf-k">${_esc(a.k)}</span>
+      <span class="pf-track"><i style="width:${Math.max(4, Math.min(100, a.v))}%"></i></span>
+      <span class="pf-v">${a.v}</span></div>`).join('');
+    return elFrom(`<div class="viz-card pf">
+      <div class="pf-head"><span class="pf-mono">${_esc(initials)}</span>
+        <div><div class="pf-name">${_esc(v.name)}</div><div class="pf-sub">${sub}</div></div>
+        ${v.archetype ? `<span class="pf-arch">${_esc(v.archetype)}</span>` : ''}</div>
+      <div class="pf-attrs">${bars}</div>
+    </div>`);
+  }
+
+  function renderVizCard(v) {
+    if (!v || !v.type) return null;
+    try {
+      if (v.type === 'match_pred') return vizMatch(v);
+      if (v.type === 'ranking')    return vizRanking(v);
+      if (v.type === 'similarity') return vizSimilarity(v);
+      if (v.type === 'profile')    return vizProfile(v);
+    } catch (e) { console.warn('viz render failed', e); }
+    return null;
+  }
+
+  function appendMsg(role, text, viz) {
     const wrap = document.createElement('div');
     wrap.className = `msg ${role}`;
 
@@ -948,6 +1126,11 @@
         pillWrap.appendChild(span);
       });
       bubble.appendChild(pillWrap);
+    }
+
+    if (role === 'bot' && viz) {
+      const card = renderVizCard(viz);
+      if (card) bubble.appendChild(card);
     }
 
     wrap.appendChild(sideEl);
@@ -995,7 +1178,7 @@
         sessionId = data.session_id;
         localStorage.setItem('footbot_session_id', sessionId);
       }
-      appendMsg('bot', data.response || data.error || 'Something went wrong. Please try again.');
+      appendMsg('bot', data.response || data.error || 'Something went wrong. Please try again.', data.viz);
     } catch (err) {
       appendMsg('bot', 'Network error — please try again.');
     } finally {
@@ -1088,12 +1271,23 @@
          + `onerror="this.outerHTML='&lt;span class=\\'flag-unknown\\'&gt;&lt;/span&gt;'">`;
   }
 
+  /* Fill the input with a prompt and send it (used by clickable preview cards). */
+  function sendPrompt(text) { input.value = text; sendMessage(); }
+
   (async function loadWCMatch() {
+    const card = document.getElementById('wc-card');
+    // Whole card is a clickable teaser for the prediction engine.
+    const ask = () => sendPrompt('Predict the next World Cup 2026 match');
+    card.addEventListener('click', ask);
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ask(); }
+    });
     try {
       const r = await fetch('/api/wc-match');
       if (!r.ok) return;
       const d = await r.json();
-      document.getElementById('wc-kicker').textContent = d.group ? `World Cup 2026 · Group ${d.group}` : 'World Cup 2026';
+      document.getElementById('wc-kicker').textContent =
+        d.group ? `World Cup 2026 · ${String(d.group).replace(/_/g,' ')}` : 'World Cup 2026 · Next Match';
       document.getElementById('wc-title').textContent = `${d.home} vs ${d.away}`;
       document.getElementById('wc-flag-home').innerHTML = getFlag(d.home, d.flag_home);
       document.getElementById('wc-flag-away').innerHTML = getFlag(d.away, d.flag_away);
@@ -1104,6 +1298,65 @@
       document.getElementById('wc-conf').innerHTML = `<span class="badge ${d.confidence_pct >= 60 ? 'green' : d.confidence_pct >= 45 ? 'amber' : 'blue'}">${d.confidence_pct}%</span>`;
       document.getElementById('wc-date').textContent = d.date;
     } catch(e) { /* keep placeholder */ }
+  })();
+
+  /* ── League-table carousel (Card 1) ──────────────────────────────────────── */
+  (async function leagueCarousel() {
+    const card = document.getElementById('lg-card');
+    const nameEl = document.getElementById('lg-name');
+    const logoEl = document.getElementById('lg-logo');
+    const rowsEl = document.getElementById('lg-rows');
+    const dotsEl = document.getElementById('lg-dots');
+    const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let leagues = [], idx = 0, timer = null, paused = false;
+
+    const rowHTML = (t) => `
+      <li class="lg-row">
+        <span class="lg-pos">${t.pos}</span>
+        ${t.crest ? `<img class="lg-crest" src="${t.crest}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+                  : '<span class="lg-crest"></span>'}
+        <span class="lg-team">${escapeHTML(t.team)}</span>
+        <span class="lg-pts">${t.points}<small>pts</small></span>
+      </li>`;
+
+    function paint(i) {
+      const lg = leagues[i]; if (!lg) return;
+      const build = () => {
+        nameEl.textContent = lg.name;
+        logoEl.src = lg.logo || ''; logoEl.style.opacity = lg.logo ? '1' : '0';
+        rowsEl.innerHTML = lg.table.map(rowHTML).join('');
+      };
+      if (REDUCED) { build(); }
+      else {
+        rowsEl.classList.add('swapping');
+        setTimeout(() => { build(); rowsEl.classList.remove('swapping'); }, 200);
+      }
+      [...dotsEl.children].forEach((d, di) => d.classList.toggle('active', di === i));
+    }
+    const go = (i) => { idx = (i + leagues.length) % leagues.length; paint(idx); };
+    function start() {
+      if (REDUCED || timer || leagues.length < 2) return;
+      timer = setInterval(() => { if (!paused && !heroIntro.hidden) go(idx + 1); }, 6000);
+    }
+
+    try {
+      const r = await fetch('/api/league-tables'); if (!r.ok) return;
+      leagues = (await r.json()).leagues || [];
+    } catch (e) { return; }
+    if (!leagues.length) { nameEl.textContent = 'Tables unavailable'; rowsEl.innerHTML = ''; return; }
+
+    dotsEl.innerHTML = leagues.map((_, i) => `<button type="button" aria-label="League ${i + 1}"></button>`).join('');
+    [...dotsEl.children].forEach((b, i) =>
+      b.addEventListener('click', (e) => { e.stopPropagation(); go(i); }));
+    go(0); start();
+
+    card.addEventListener('mouseenter', () => paused = true);
+    card.addEventListener('mouseleave', () => paused = false);
+    const ask = () => { const lg = leagues[idx]; if (lg) sendPrompt(`Show me the current ${lg.prompt} table`); };
+    card.addEventListener('click', ask);
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ask(); }
+    });
   })();
 
   /* ── Lightweight data-web particle background ──────────────────────────── */

@@ -6,6 +6,19 @@ the player's standout traits are read from the z-scored feature vector.
 
 from langchain.tools import tool
 
+from viz import embed_viz
+
+_PROFILE_ATTRS = [("Pace", "fc_pace"), ("Shooting", "fc_shooting"), ("Passing", "fc_passing"),
+                  ("Dribbling", "fc_dribbling"), ("Defending", "fc_defending"), ("Physical", "fc_physic")]
+
+
+def _to_int(v):
+    try:
+        f = float(v)
+        return int(round(f)) if f == f else None  # f==f filters NaN
+    except (TypeError, ValueError):
+        return None
+
 
 def make_get_player_archetype_tool(engine):
     df = engine.df
@@ -50,6 +63,17 @@ def make_get_player_archetype_tool(engine):
             f"- Other notable {role}: {', '.join(notable[:5]) if notable else 'n/a'}",
             f"\n🔍 Method: Position-aware K-Means clustering on {len(feats)} normalized features.",
         ]
-        return "\n".join(lines)
+        attrs = [{"k": label, "v": _to_int(r.get(col))}
+                 for label, col in _PROFILE_ATTRS if _to_int(r.get(col)) is not None]
+        viz = {
+            "type": "profile",
+            "name": r.get("player_name", player_name),
+            "pos": r.get("sub_position") or position,
+            "nat": r.get("nationality") or "",
+            "club": r.get("club") or "",
+            "archetype": role,
+            "attrs": attrs,
+        }
+        return embed_viz("\n".join(lines), viz if attrs else None)
 
     return get_player_archetype

@@ -519,7 +519,11 @@ def format_wc_top_scorer(result: dict) -> str:
     lines.append("\n🔍 Method: Player goal-rate (goals/90) from FBref + FC26 data × expected WC "
                  "games (Monte Carlo R32/R16/QF/SF/Final stage probabilities) × shooting quality. "
                  "Candidates restricted to official 2026 squads; ranked by projected tournament goals.")
-    return "\n".join(lines)
+    from viz import embed_viz
+    viz = {"type": "ranking", "title": "World Cup 2026 — Golden Boot (projected)", "unit": "goals",
+           "items": [{"name": c["player"], "value": round(float(c["wc_proj_goals"]), 1), "sub": c["team"]}
+                     for c in cands[:6]]}
+    return embed_viz("\n".join(lines), viz)
 
 
 def format_wc_match(result: dict) -> str:

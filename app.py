@@ -75,6 +75,9 @@ except Exception as _e:
 # Per-session locks so concurrent users don't block each other.
 _session_locks: dict = {}
 _session_locks_lock = threading.Lock()
+# Warm the league-table carousel cache in the background (non-blocking).
+import live_tables as _live_tables
+_live_tables.prefetch(os.getenv("FOOTBALL_DATA_API_KEY", ""))
 print(f"[app] FOOTBOT ready in {_time.time()-_t0:.1f}s", flush=True)
 
 
@@ -107,9 +110,10 @@ def chat():
     if not user_msg:
         return jsonify({"error": "Empty message"}), 400
 
+    viz = None
     try:
         with _get_session_lock(session_id):
-            response = _agent.invoke(user_msg, session_id=session_id)
+            response, viz = _agent.invoke(user_msg, session_id=session_id)
     except Exception as e:
         print(f"[app] Agent error: {e}", flush=True)
         response = (
@@ -117,7 +121,7 @@ def chat():
             "Please try rephrasing the question."
         )
 
-    return jsonify({"response": response, "session_id": session_id})
+    return jsonify({"response": response, "viz": viz, "session_id": session_id})
 
 
 @app.route("/reset", methods=["POST"])
@@ -200,6 +204,12 @@ def wc_featured_match():
             result = {**match, "predicted_winner": match["home"],
                       "confidence_pct": 60, "score": "2–1", "p_home": 55, "p_draw": 25, "p_away": 20}
     return jsonify(result)
+
+
+@app.route("/api/league-tables")
+def league_tables():
+    """Top-5 of the big-5 leagues for the landing carousel (cached, prefetched)."""
+    return jsonify({"leagues": _live_tables.get_tables(os.getenv("FOOTBALL_DATA_API_KEY", ""))})
 
 
 @app.route("/healthz")

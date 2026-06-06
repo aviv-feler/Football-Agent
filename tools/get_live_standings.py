@@ -8,16 +8,36 @@ from langchain.tools import tool
 
 API_BASE = "https://api.football-data.org/v4"
 
-# Competition-name mapping for the API.
+# Competition-name mapping for the API (English + Hebrew aliases, lowercased).
 COMPETITION_MAP = {
     "premier league":    "PL",
+    "epl":               "PL",
+    "english league":    "PL",
+    "הליגה האנגלית":     "PL",
+    "ליגה אנגלית":       "PL",
+    "פריימר ליג":        "PL",
+    "פרמייר ליג":        "PL",
+    "ליגת העל האנגלית":  "PL",
+    "אליפות אנגליה":     "PL",
     "la liga":           "PD",
+    "הליגה הספרדית":     "PD",
+    "לה ליגה":           "PD",
+    "ליגה ספרדית":       "PD",
     "bundesliga":        "BL1",
+    "בונדסליגה":         "BL1",
+    "ליגה גרמנית":       "BL1",
     "serie a":           "SA",
+    "סריה א":            "SA",
+    "סדרה א":            "SA",
+    "ליגה איטלקית":      "SA",
     "ligue 1":           "FL1",
+    "ליגה צרפתית":       "FL1",
     "champions league":  "CL",
+    "ליגת האלופות":      "CL",
     "world cup":         "WC",
     "world cup 2026":    "WC",
+    "מונדיאל":           "WC",
+    "גביע העולם":        "WC",
     "euro":              "EC",
     "euros":             "EC",
     "copa america":      "CLI",
