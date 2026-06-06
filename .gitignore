@@ -24,3 +24,5 @@ data/*
 !data/national_matches.csv
 !data/club_matches.csv
 !data/world_cup_2026_squads.csv
+!data/games.csv
+!data/top5_leagues_final_tables_2025_26.csv
