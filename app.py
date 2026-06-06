@@ -7,6 +7,8 @@ import os
 import sys
 import threading
 import uuid
+import subprocess
+import datetime
 
 # Force UTF-8 on the console so debug prints with accented player names ("Mbappé",
 # "Højlund") or emoji never raise UnicodeEncodeError on a Windows cp125x console — that
@@ -26,6 +28,34 @@ from agent import load_resources, build_agent
 
 app = Flask(__name__)
 
+
+def _compute_version() -> dict:
+    """Build a version stamp that increments per commit + a build timestamp, so a
+    refresh after deploy confirms the newest code is live. Uses the git commit
+    count/hash when available, falling back to env vars (set by the host) or 'dev'."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    def _git(args):
+        try:
+            return subprocess.check_output(["git", *args], cwd=here,
+                                           stderr=subprocess.DEVNULL).decode().strip()
+        except Exception:
+            return ""
+    commit = (os.getenv("RENDER_GIT_COMMIT") or os.getenv("SOURCE_VERSION")
+              or _git(["rev-parse", "HEAD"]) or "")
+    commit = commit[:7] if commit else "dev"
+    count = _git(["rev-list", "--count", "HEAD"]) or "0"
+    build_time = os.getenv("BUILD_TIME") or datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    return {
+        "version": f"v1.0.{count}",
+        "commit": commit,
+        "build_time": build_time,
+        "label": f"v1.0.{count} · {commit} · {build_time}",
+    }
+
+
+_VERSION = _compute_version()
+print(f"[app] Build {_VERSION['label']}", flush=True)
+
 # Load resources once at startup.
 print("[app] Initializing FOOTBOT...", flush=True)
 import time as _time; _t0 = _time.time()
@@ -35,6 +65,13 @@ _agent = build_agent(_engine, _national_strength, _schedule)
 # and schedule, so the /api/wc-match endpoint doesn't rebuild them on every request.
 from wc_predictor import WCPredictor as _WCPredictor
 _wc_featured = _WCPredictor(_schedule, _national_strength)
+# Trained Logistic Regression predictor for the featured-match widget.
+try:
+    from match_predictor import MatchPredictor as _MatchPredictor
+    _match_predictor = _MatchPredictor()
+except Exception as _e:
+    print(f"[app] Match predictor unavailable for widget: {_e}", flush=True)
+    _match_predictor = None
 # Per-session locks so concurrent users don't block each other.
 _session_locks: dict = {}
 _session_locks_lock = threading.Lock()
@@ -50,7 +87,13 @@ def _get_session_lock(session_id: str) -> threading.RLock:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", app_version=_VERSION["label"])
+
+
+@app.route("/version")
+def version():
+    """Build/version stamp — refresh after deploy to confirm the newest code is live."""
+    return jsonify(_VERSION)
 
 
 @app.route("/chat", methods=["POST"])
@@ -115,23 +158,47 @@ def wc_featured_match():
         except Exception:
             pass
 
-    # Get prediction from the WC predictor built once at startup.
+    def _winner(sh, sa, home, away):
+        # A draw scoreline must never report a team as the winner.
+        if sh > sa: return home
+        if sa > sh: return away
+        return "Draw"
+
+    result = None
+    # Preferred: trained Logistic Regression squad-strength model.
     try:
-        pred = _wc_featured.predict_match(match["home"], match["away"])
-        winner = match["home"] if pred["p_a"] > pred["p_b"] else match["away"]
-        conf_pct = round(max(pred["p_a"], pred["p_b"]) * 100)
-        score = pred["scoreline"]
-        result = {**match,
-            "predicted_winner": winner,
-            "confidence_pct": conf_pct,
-            "score": f"{score[0]}–{score[1]}",
-            "p_home": round(pred["p_a"] * 100),
-            "p_draw": round(pred["p_draw"] * 100),
-            "p_away": round(pred["p_b"] * 100),
-        }
+        if (_match_predictor is not None and _match_predictor.has_team(match["home"])
+                and _match_predictor.has_team(match["away"])):
+            p = _match_predictor.predict(match["home"], match["away"])
+            if p is not None:
+                sh, sa = p["score"]
+                result = {**match,
+                    "predicted_winner": _winner(sh, sa, match["home"], match["away"]),
+                    "confidence_pct": round(max(p["p_win"], p["p_draw"], p["p_loss"]) * 100),
+                    "score": f"{sh}–{sa}",
+                    "p_home": round(p["p_win"] * 100),
+                    "p_draw": round(p["p_draw"] * 100),
+                    "p_away": round(p["p_loss"] * 100),
+                }
     except Exception as e:
-        result = {**match, "predicted_winner": match["home"],
-                  "confidence_pct": 60, "score": "2–1", "p_home": 55, "p_draw": 25, "p_away": 20}
+        print(f"[app] widget LR predict failed: {e}", flush=True)
+
+    # Fallback: hybrid strength model (also with the draw rule applied).
+    if result is None:
+        try:
+            pred = _wc_featured.predict_match(match["home"], match["away"])
+            sh, sa = pred["scoreline"]
+            result = {**match,
+                "predicted_winner": _winner(sh, sa, match["home"], match["away"]),
+                "confidence_pct": round(max(pred["p_a"], pred["p_b"]) * 100),
+                "score": f"{sh}–{sa}",
+                "p_home": round(pred["p_a"] * 100),
+                "p_draw": round(pred["p_draw"] * 100),
+                "p_away": round(pred["p_b"] * 100),
+            }
+        except Exception:
+            result = {**match, "predicted_winner": match["home"],
+                      "confidence_pct": 60, "score": "2–1", "p_home": 55, "p_draw": 25, "p_away": 20}
     return jsonify(result)
 
 
@@ -143,6 +210,7 @@ def healthz():
         "players": int(len(_engine.df)),
         "world_cup_matches": int(len(_schedule)),
         "gemini_configured": bool(os.getenv("GEMINI_API_KEY")),
+        "version": _VERSION["label"],
     })
 
 

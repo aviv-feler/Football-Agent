@@ -7,7 +7,8 @@ from langchain.tools import tool
 from wc_predictor import WCPredictor, format_group_prediction, format_wc_winner, format_wc_match, format_wc_top_scorer
 
 
-def make_wc_prediction_tools(wc: WCPredictor, players_df=None, squads_df=None) -> list:
+def make_wc_prediction_tools(wc: WCPredictor, players_df=None, squads_df=None,
+                             match_predictor=None) -> list:
 
     @tool
     def predict_wc_group(group: str) -> str:
@@ -39,6 +40,12 @@ def make_wc_prediction_tools(wc: WCPredictor, players_df=None, squads_df=None) -
         'Who will win Netherlands vs Argentina at the World Cup?'
         Pass corrected full national team names.
         """
+        # Prefer the trained Logistic Regression squad-strength model.
+        if match_predictor is not None and match_predictor.has_team(team_a) and match_predictor.has_team(team_b):
+            from match_predictor import format_prediction
+            pred = match_predictor.predict(team_a, team_b)
+            if pred is not None:
+                return format_prediction(pred)
         result = wc.predict_match(team_a, team_b)
         return format_wc_match(result)
 

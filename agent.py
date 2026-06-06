@@ -25,16 +25,19 @@ from tools.compare_players_jaccard import make_compare_players_jaccard_tool
 from tools.predict_match import make_predict_match_tool
 from tools.predict_score import make_prediction_tools
 from tools.wc_prediction_tools import make_wc_prediction_tools
+from tools.get_national_squad import make_get_national_squad_tool
 from tools.get_live_standings import make_get_live_standings_tool
 from tools.get_top_scorers import make_get_top_scorers_tool
 from tools.world_cup import make_world_cup_tool
 from club_model import ClubModel
 from prediction_engine import PredictionEngine, parse_prediction_query
 from wc_predictor import WCPredictor
+from match_predictor import MatchPredictor
 
 DATA_CSV     = "data/players_clean.csv"
 WC_CSV       = "data/fwc26_match_schedule_agent.csv"
 WC_SQUADS_CSV = "data/world_cup_2026_squads.csv"
+PREDICTOR_PKL = "predictor_model.pkl"
 
 SYSTEM_PROMPT = """You are FOOTBOT, an elite AI football intelligence platform backed by real Data Science models.
 You have a database of ~48,000 players, 10 seasons of top-5 league results, and a full FIFA World Cup 2026 prediction engine.
@@ -81,16 +84,27 @@ ANALYSIS:
 - get_player_archetype(player)        → K-Means cluster role
 - detect_anomalies(filter)            → Z-score over/under-performers
 - compare_players_jaccard(a vs b)     → side-by-side stats + trait overlap
+SQUADS & LIVE DATA:
+- get_national_squad(team)            → OFFICIAL WC 2026 squad / roster / called-up players + each player's CURRENT club (source of truth)
 - get_live_standings(competition)     → LIVE league table (football-data.org)
 - get_top_scorers(competition)        → LIVE current-season scorers (football-data.org)
 - world_cup_info(query)               → WC 2026 schedule and fixtures
 
 TOOL STRATEGY:
+- "Who is in X's squad?", "X's World Cup roster", "is PLAYER called up?", "what club does
+  national-team PLAYER play for now?" → call get_national_squad(X).
 - For LIVE standings/scorers this season → prefer get_live_standings / get_top_scorers.
 - For predictions, scouting, analysis → use the DS model tools.
 - For broad questions ("who is the best striker?", "who will win WC?") → call 1–2 relevant tools,
   then synthesise the data into a real answer with your reasoning on top.
 - Correct typos/nicknames before any tool call: "mbape"→"Kylian Mbappé", "barca"→"Barcelona".
+
+DATA SOURCES & ATTRIBUTION (be honest — never claim a source you didn't use):
+- football-data.org is used ONLY by get_live_standings and get_top_scorers. NEVER cite
+  football-data.org as the source for a player's club, transfer, or squad — it was not queried.
+- A player's club in the scouting/analysis data is a snapshot and can be outdated. For a WC
+  national-team player's CURRENT club, use get_national_squad (official 2026 squad clubs).
+- Only state a data source that an actual tool result gave you (its "🔍 Method:" line).
 
 ALWAYS keep the "🔍 Method:" line from tool outputs — required for academic grading.
 NEVER invent stats. If you cite a number, it must come from a tool result."""
@@ -313,6 +327,17 @@ class ScoutAgent:
                 ])
                 return str(tool.invoke(competition))
 
+        if any(w in q for w in ["squad", "roster", "called up", "call-up", "call up", "סגל"]):
+            tool = self.tool_map.get("get_national_squad")
+            if tool:
+                team = self._extract_after_keywords(user_input, [
+                    r"squad\s+(?:of|for)\s+(.+)$",
+                    r"roster\s+(?:of|for)\s+(.+)$",
+                    r"(.+?)(?:'s)?\s+(?:squad|roster)\b",
+                    r"סגל\s+(?:של\s+)?(.+)$",
+                ])
+                return str(tool.invoke({"team_name": team}))
+
         if any(w in q for w in ["world cup", "mundial", "group ", "fixture", "schedule", "מונדיאל", "בית "]):
             tool = self.tool_map.get("world_cup_info")
             if tool:
@@ -521,14 +546,29 @@ def build_agent(engine, national_strength, schedule):
     scout = ScoutingEngine(engine)
     print(f"[agent] Scouting engine ready: {len(scout.pool)} players with real attributes.", flush=True)
 
+    # Trained Logistic Regression match predictor (squad-strength features).
+    match_predictor = None
+    if os.path.exists(PREDICTOR_PKL):
+        try:
+            match_predictor = MatchPredictor(PREDICTOR_PKL)
+            print(f"[agent] Match predictor (Logistic Regression) loaded: "
+                  f"{match_predictor.n_train} training matches, {len(match_predictor.table)} nations.", flush=True)
+        except Exception as e:
+            print(f"[agent] Warning: could not load {PREDICTOR_PKL} ({e}); using strength fallback.", flush=True)
+    else:
+        print(f"[agent] Warning: {PREDICTOR_PKL} not found — run python train_predictor.py. "
+              "Using strength fallback for national predictions.", flush=True)
+
     tools = [
         *make_prediction_tools(pred_engine),
-        *make_wc_prediction_tools(wc_pred, players_df=engine.df, squads_df=wc_squads),
+        *make_wc_prediction_tools(wc_pred, players_df=engine.df, squads_df=wc_squads,
+                                  match_predictor=match_predictor),
         *make_scouting_tools(scout),
         make_get_player_archetype_tool(engine),
         make_detect_anomalies_tool(engine),
         make_compare_players_jaccard_tool(engine),
-        make_predict_match_tool(engine.df, national_strength, club_model),
+        make_predict_match_tool(engine.df, national_strength, club_model, match_predictor=match_predictor),
+        make_get_national_squad_tool(wc_squads),
         make_get_live_standings_tool(),
         make_get_top_scorers_tool(),
         make_world_cup_tool(schedule),

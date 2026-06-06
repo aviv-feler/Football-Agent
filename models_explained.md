@@ -135,27 +135,87 @@ Expected method line:
 Method: Jaccard similarity on categorical trait sets.
 ```
 
-## 7. Match Prediction
+## 7. Match Prediction — Logistic Regression on Squad Strength
 
-Tool: `predict_match`
+Tools: `predict_match`, `predict_wc_match` (and the landing-page featured widget).
+Code: `team_strength.py`, `train_predictor.py`, `match_predictor.py`.
 
-The current implementation uses a softmax-style squad-strength model. After the
-new data is organized, this should be revisited and either documented honestly as
-softmax squad-strength prediction or replaced with a simple logistic-regression
-model trained on historical match features.
+### Why we changed the model
 
-Possible features:
+The previous predictor leaned on *recent form* pulled from the live API. Most
+national teams — especially smaller ones — have too few recent matches, so the
+form features came back empty/similar and almost every match collapsed to a 1–1
+draw. Only extreme mismatches produced a real result. We replaced this with a
+**multiclass Logistic Regression** (a core course model) whose primary signal is
+**squad strength**, which we have for every team.
 
-- Recent win rate from `football-data.org`.
-- Average goals scored.
-- Average goals conceded.
-- Squad market value.
-- Squad FM current ability / potential ability aggregates.
+### Step A — Team strength features (`team_strength.py`)
 
-Expected method line:
+For each nation we compute interpretable strength features from the player data
+(`players_clean.csv`). For the 48 World Cup 2026 teams we use the **official
+called-up squad** (`world_cup_2026_squads.csv`) joined to the player data by name
+(~83% match; the high-value players that drive strength match best, and gaps fall
+back to position defaults). Other nations use their strongest players in the pool.
+
+Per-team features (`FEATURES`):
+
+- `value_xi_log` — log of the **starting-XI market value** (sum of the top-11 by value).
+- `value_mean_log` — log of the mean market value of the top-23 (squad depth of value).
+- `rating_mean` — average EA FC rating of the best 16 players.
+- `attack` — mean shooting of the top-5 attackers.
+- `defense` — mean defending of the top-5 defenders.
+
+### Step B — Training set + model (`train_predictor.py`)
+
+Training labels come from historical international results
+(`national_matches.csv`, 250 usable World Cup matches, neutral ground). For each
+match the features are the **differences** between the two teams (`DIFF_FEATURES`):
 
 ```text
-Method: Logistic regression or softmax model on team-form and squad-strength features.
+d_value_xi   = A.value_xi_log   - B.value_xi_log
+d_value_mean = A.value_mean_log - B.value_mean_log
+d_rating     = A.rating_mean    - B.rating_mean
+d_att_def    = A.attack         - B.defense
+d_def_att    = A.defense        - B.attack
+```
+
+Pipeline: `StandardScaler` → `LogisticRegression(multi_class, class_weight="balanced")`,
+labels `H / D / A`. A separate `PoissonRegressor` predicts each team's expected
+goals (own attack/value vs opponent defense + rating edge) for the scoreline.
+The bundle is saved to `predictor_model.pkl` and loaded once at startup.
+
+5-fold CV accuracy ≈ 47% vs a 42% majority baseline (3-class, high-variance domain).
+
+### Step C — Prediction (`match_predictor.py`)
+
+`predict(team1, team2)` builds both strength vectors, takes the differences, runs
+the Logistic Regression for `P(win) / P(draw) / P(loss)`, and the Poisson model for
+expected goals. The scoreline is the most probable one **consistent with the
+predicted outcome**, so the headline result and the score never contradict (and a
+draw outcome always shows an equal scoreline → fixes the "1–1 but winner = X" bug).
+The reasoning cites the real driving features (value ratio, rating gap, attack vs
+defense).
+
+### Step D — Missing data
+
+Every nation in the player pool resolves to a strength vector; truly unknown teams
+fall back to neutral defaults and the answer says so. The model never collapses to
+a blanket 1–1 — predictions are differentiated by real strength gaps.
+
+### Validation (printed by `python train_predictor.py`)
+
+```text
+Brazil vs Argentina : 27% / 41% / 31%  -> Draw        1-1   (close, slight edge Argentina)
+France vs Canada    : 53% / 29% / 18%  -> France win  1-0
+Spain  vs Morocco   : 38% / 33% / 28%  -> Spain win   1-0   (favored, not a blowout)
+Germany vs Japan    : 47% / 33% / 21%  -> Germany win 1-0   (Japan competitive)
+```
+
+### Method line
+
+```text
+🔍 Method: Logistic Regression on squad-strength features (starting-XI market value,
+average squad rating, attack vs defense), trained on historical international results.
 ```
 
 ## Query To Model Map
@@ -167,4 +227,5 @@ Method: Logistic regression or softmax model on team-form and squad-strength fea
 | "What archetype is X?" | `get_player_archetype` | K-Means clustering |
 | "Find anomalies" | `detect_anomalies` | Z-score |
 | "Compare X and Y" | `compare_players_jaccard` | Jaccard similarity |
-| "Predict X vs Y" | `predict_match` | Logistic/softmax prediction |ך
+| "Predict X vs Y" | `predict_match` / `predict_wc_match` | Logistic Regression (squad strength) |
+| "Who is in X's squad?" | `get_national_squad` | Official 2026 squad lookup (data, not model) |

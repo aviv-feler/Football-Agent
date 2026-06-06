@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 *.pyo
 server.*.log
+server.log
 .venv/
 venv/
 *.egg-info/
@@ -22,3 +23,4 @@ data/*
 !data/data_source_map.json
 !data/national_matches.csv
 !data/club_matches.csv
+!data/world_cup_2026_squads.csv

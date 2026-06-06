@@ -13,11 +13,13 @@ from langchain.tools import tool
 from ds_engine import normalize_nation
 
 
-def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame, club_model=None):
+def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame, club_model=None,
+                            match_predictor=None):
     """Factory for the match-prediction tool.
 
     Routes a matchup to the club Poisson model when both teams are known clubs, and to
-    the hybrid national-team model when both are national teams.
+    the trained Logistic Regression squad-strength model for national teams (falling
+    back to the hybrid strength softmax if the trained model is unavailable).
     """
 
     known_nations = set(national_strength.index)
@@ -94,6 +96,13 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame, c
         if club_model is not None and getattr(club_model, "ok", False):
             if club_model.resolve(team1) and club_model.resolve(team2):
                 return _predict_club(team1, team2)
+
+        # National teams: prefer the trained Logistic Regression squad-strength model.
+        if match_predictor is not None and match_predictor.has_team(team1) and match_predictor.has_team(team2):
+            from match_predictor import format_prediction
+            pred = match_predictor.predict(team1, team2)
+            if pred is not None:
+                return format_prediction(pred)
 
         n1 = normalize_nation(team1, known_nations)
         n2 = normalize_nation(team2, known_nations)
