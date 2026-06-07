@@ -116,6 +116,85 @@ TRAIT_KEYWORDS = {
     "goals_per90": ["goal-scoring", "goal scoring", "prolific", "scoring ability"],
 }
 
+# ---- region / nationality / league filtering -------------------------------
+# Transfermarkt league code -> the country whose domestic league it is. Decoded
+# from the data (IT1=Lazio/Juve, GB1=Arsenal, ES1=Levante, L1=Dortmund, FR1=Monaco...).
+LEAGUE_CODE_COUNTRY = {
+    "IT1": "Italy", "GB1": "England", "ES1": "Spain", "L1": "Germany", "FR1": "France",
+    "NL1": "Netherlands", "PO1": "Portugal", "BE1": "Belgium", "SC1": "Scotland",
+    "TR1": "Turkey", "RU1": "Russia", "GR1": "Greece", "DK1": "Denmark", "A1": "Austria",
+    "UKR1": "Ukraine", "BRA1": "Brazil", "ARG1": "Argentina", "MLS1": "United States",
+    "MEX1": "Mexico", "COL1": "Colombia", "JAP1": "Japan", "KR1": "Korea, South",
+    "SA1": "Saudi Arabia", "NO1": "Norway", "SE1": "Sweden", "PL1": "Poland",
+    "RO1": "Romania", "AUS1": "Australia", "C1": "Switzerland", "TS1": "Czech Republic",
+    "SER1": "Serbia",
+}
+LEAGUE_CODES = set(LEAGUE_CODE_COUNTRY)
+# Inverse: country -> its domestic league code (for the nationality-OR-league filter).
+COUNTRY_LEAGUE = {country: code for code, country in LEAGUE_CODE_COUNTRY.items()}
+# Major European league codes — for "from a European league" style asks (Q5 demo).
+EUROPEAN_LEAGUE_CODES = {"GB1", "ES1", "IT1", "L1", "FR1", "NL1", "PO1", "BE1", "SC1",
+                         "TR1", "RU1", "GR1", "DK1", "A1", "UKR1", "SE1", "NO1", "PL1",
+                         "RO1", "SER1", "TS1", "C1"}
+EUROPE_TOKENS = {"europe", "european", "european league", "european leagues",
+                 "top european league", "top european leagues", "top 5", "top five",
+                 "big 5", "big five", "big-5", "top-5", "ליגה אירופאית", "אירופה"}
+
+# Spoken league name (any language) -> code, for explicit "Premier League"/"Serie A" asks.
+# When the user names a LEAGUE we filter by that league only (not nationality).
+LEAGUE_NAME_TO_CODE = {
+    "premier league": "GB1", "epl": "GB1", "english premier league": "GB1",
+    "english league": "GB1", "la liga": "ES1", "laliga": "ES1", "primera division": "ES1",
+    "serie a": "IT1", "bundesliga": "L1", "ligue 1": "FR1", "ligue1": "FR1",
+    "eredivisie": "NL1", "primeira liga": "PO1", "liga portugal": "PO1",
+    "scottish premiership": "SC1", "super lig": "TR1", "mls": "MLS1",
+    "brasileirao": "BRA1", "brazilian league": "BRA1", "saudi pro league": "SA1",
+    # Hebrew league names
+    "הליגה האנגלית": "GB1", "פריימר ליג": "GB1", "פרמייר ליג": "GB1", "ליגה אנגלית": "GB1",
+    "לה ליגה": "ES1", "הליגה הספרדית": "ES1", "סריה א": "IT1", "סדרה א": "IT1",
+    "הליגה האיטלקית": "IT1", "בונדסליגה": "L1", "הליגה הגרמנית": "L1", "ליגה 1": "FR1",
+    "הליגה הצרפתית": "FR1",
+}
+# Demonym / localized country name -> canonical nationality value in the data.
+COUNTRY_ALIASES = {
+    "italian": "Italy", "italia": "Italy", "איטליה": "Italy", "איטלקי": "Italy", "איטלקים": "Italy",
+    "brazilian": "Brazil", "brasil": "Brazil", "ברזיל": "Brazil", "ברזילאי": "Brazil", "ברזילאים": "Brazil",
+    "spanish": "Spain", "espana": "Spain", "españa": "Spain", "ספרד": "Spain", "ספרדי": "Spain", "ספרדים": "Spain",
+    "german": "Germany", "deutschland": "Germany", "גרמניה": "Germany", "גרמני": "Germany", "גרמנים": "Germany",
+    "english": "England", "אנגליה": "England", "אנגלי": "England", "אנגלים": "England",
+    "french": "France", "צרפת": "France", "צרפתי": "France", "צרפתים": "France",
+    "dutch": "Netherlands", "holland": "Netherlands", "הולנד": "Netherlands", "הולנדי": "Netherlands",
+    "portuguese": "Portugal", "פורטוגל": "Portugal", "פורטוגלי": "Portugal",
+    "argentine": "Argentina", "argentinian": "Argentina", "ארגנטינה": "Argentina", "ארגנטינאי": "Argentina",
+    "belgian": "Belgium", "בלגיה": "Belgium",
+    "croatian": "Croatia", "קרואטיה": "Croatia",
+    "uruguayan": "Uruguay", "אורוגוואי": "Uruguay",
+    "american": "United States", "usa": "United States",
+}
+# Country names the rule-based parser recognises in free text.
+KNOWN_COUNTRIES = (set(COUNTRY_LEAGUE) | set(COUNTRY_ALIASES.values()) | {
+    "Croatia", "Uruguay", "Nigeria", "Senegal", "Ghana", "Morocco", "Egypt",
+    "Wales", "Ireland", "Switzerland", "Serbia", "Cote d'Ivoire", "Colombia",
+})
+# Coarse position group (data 'position' column) keywords -> group, used when no
+# specific role is detected ("attacking player from Italy" -> Attack).
+GROUP_KEYWORDS = {
+    "Attack":     ["attack", "attacking", "attacker", "forward", "offensive", "front",
+                   "התקפה", "התקפי", "התקפיים"],
+    "Midfield":   ["midfield", "midfielder", "central mid", "אמצע"],
+    "Defender":   ["defender", "defensive", "defence", "defense", "backline", "back line",
+                   "הגנה", "הגנתי"],
+    "Goalkeeper": ["goalkeeper", "keeper", "שוער"],
+}
+
+
+def normalize_country(name: str) -> str:
+    """Map a demonym / localized / raw country string to a canonical nationality value."""
+    if not name:
+        return ""
+    raw = name.strip()
+    return COUNTRY_ALIASES.get(raw.lower(), raw)
+
 
 def _minmax(series: pd.Series, log: bool = False) -> pd.Series:
     s = pd.to_numeric(series, errors="coerce")
@@ -245,6 +324,7 @@ class ScoutingEngine:
             "player_name": row.get("player_name"), "age": int(row.get("age") or 0),
             "position": row.get("sub_position") or row.get("position"),
             "club": row.get("club"), "nationality": row.get("nationality"),
+            "league": row.get("league"), "player_id": row.get("player_id"),
             "overall": int(row["fc_overall"]) if pd.notna(row.get("fc_overall")) else None,
             "potential": int(row["fc_potential"]) if pd.notna(row.get("fc_potential")) else None,
             "archetype": row.get("archetype"),
@@ -271,7 +351,7 @@ class ScoutingEngine:
                 "reference_archetype": self.pool.loc[idx, "archetype"], "candidates": cards}, None
 
     def find_replacement(self, name: str, club: str = "", max_age: int = 0, limit: int = 5,
-                          role_override: str = ""):
+                          role_override: str = "", country: str = ""):
         idx = self.resolve(name)
         if idx is None:
             return None, f"Could not find a player matching '{name}' with attribute data."
@@ -287,6 +367,9 @@ class ScoutingEngine:
             mask &= ~self.pool["club"].fillna("").str.contains(club, case=False, na=False)
         if max_age:
             mask &= pd.to_numeric(self.pool["age"], errors="coerce").fillna(99) <= max_age
+        region = self._region_mask(country)
+        if region is not None:
+            mask &= region
         cand = self.pool.index[mask]
         if len(cand) == 0:
             return None, f"No replacement candidates found for {self.pool.loc[idx, 'player_name']}."
@@ -299,36 +382,51 @@ class ScoutingEngine:
                 "club": club or None, "candidates": cards}, None
 
     def search_by_profile(self, role: str = "", positions=None, age_max: int = 0,
-                          potential_min: int = 0, important_features=None, limit: int = 5):
+                          potential_min: int = 0, important_features=None,
+                          country: str = "", position_group: str = "", limit: int = 5):
         target, weights = self.build_target_profile(important_features, role)
         important = list(weights.keys())
         mask = self._position_mask(role, positions)
+        # Coarse position group ("Attack"/"Midfield"/"Defender"/"Goalkeeper") when the
+        # query named a line but not a specific role ("attacking player from Italy").
+        if not role and not positions and position_group:
+            mask &= self.pool["position"] == position_group
         if age_max:
             mask &= pd.to_numeric(self.pool["age"], errors="coerce").fillna(99) <= age_max
         if potential_min:
             mask &= pd.to_numeric(self.pool["fc_potential"], errors="coerce").fillna(0) >= potential_min
+        region = self._region_mask(country)
+        if region is not None:
+            mask &= region
         cand = self.pool.index[mask]
         if len(cand) == 0:
-            return None, "No players matched those filters."
+            return None, f"No players matched those filters{(' for ' + country) if country else ''}."
         sim = self.calculate_weighted_similarity(target, weights, cand)
         composite = {"sim": .50, "pot": .20, "cur": .15, "age": .10, "rel": .05}
         age_ctx = {"mode": "young", "age_max": age_max} if age_max else {"mode": "neutral"}
         ranked = self.rank_candidates(cand, sim, composite, age_ctx, limit)
         cards = [self._card(it, role or "default", important=important) for it in ranked]
-        return {"type": "profile", "role": role or "custom profile", "important_features": important,
-                "filters": {"age_max": age_max or None, "potential_min": potential_min or None},
+        return {"type": "profile", "role": role or position_group or "custom profile",
+                "important_features": important,
+                "filters": {"age_max": age_max or None, "potential_min": potential_min or None,
+                            "country": country or None},
                 "candidates": cards}, None
 
     def find_wonderkids(self, role: str = "", positions=None, age_max: int = 21,
                         potential_min: int = 80, important_features=None, limit: int = 5,
-                        max_overall: int = 0):
+                        max_overall: int = 0, country: str = "", position_group: str = ""):
         target, weights = self.build_target_profile(important_features, role)
         important = list(weights.keys())
         mask = self._position_mask(role, positions)
+        if not role and not positions and position_group:
+            mask &= self.pool["position"] == position_group
         mask &= pd.to_numeric(self.pool["age"], errors="coerce").fillna(99) <= (age_max or 21)
         mask &= pd.to_numeric(self.pool["fc_potential"], errors="coerce").fillna(0) >= (potential_min or 80)
         if max_overall:
             mask &= pd.to_numeric(self.pool["fc_overall"], errors="coerce").fillna(99) <= max_overall
+        region = self._region_mask(country)
+        if region is not None:
+            mask &= region
         cand = self.pool.index[mask]
         if len(cand) == 0:
             return None, "No wonderkids matched those filters (try relaxing age or potential)."
@@ -336,9 +434,10 @@ class ScoutingEngine:
         composite = {"sim": .25, "pot": .40, "cur": .15, "age": .15, "rel": .05}   # potential-led
         ranked = self.rank_candidates(cand, sim, composite, {"mode": "young", "age_max": age_max}, limit)
         cards = [self._card(it, role or "default", important=important) for it in ranked]
-        return {"type": "wonderkid", "role": role or "any position", "important_features": important,
+        return {"type": "wonderkid", "role": role or position_group or "any position",
+                "important_features": important,
                 "filters": {"age_max": age_max, "potential_min": potential_min,
-                            "max_overall": max_overall or None},
+                            "max_overall": max_overall or None, "country": country or None},
                 "candidates": cards}, None
 
     def _position_mask(self, role: str, positions) -> pd.Series:
@@ -351,6 +450,36 @@ class ScoutingEngine:
             if subs:
                 return self.pool["sub_position"].isin(subs)
         return pd.Series(True, index=self.pool.index)
+
+    def _region_mask(self, country: str = ""):
+        """Hard filter for a country/league constraint, applied to the candidate pool
+        BEFORE ranking. Returns None when there is nothing to filter on.
+
+        - An explicit LEAGUE ("Premier League", "Serie A", or a raw code like "IT1")
+          filters by that league only.
+        - A COUNTRY / demonym ("Italy", "Italian", "Brazil") matches players of that
+          NATIONALITY *or* players in that country's domestic league — so "from Italy"
+          returns Italians anywhere plus anyone in Serie A.
+        """
+        raw = (country or "").strip()
+        if not raw:
+            return None
+        low = raw.lower()
+        league = self.pool["league"].fillna("")
+        # "Europe" / "European league" -> the major European leagues (not one country).
+        if low in EUROPE_TOKENS:
+            return league.isin(EUROPEAN_LEAGUE_CODES)
+        # Explicit spoken league name -> that league only.
+        if low in LEAGUE_NAME_TO_CODE:
+            return league == LEAGUE_NAME_TO_CODE[low]
+        # Raw league code (e.g. "IT1") -> that league only.
+        if raw.upper() in LEAGUE_CODES:
+            return league == raw.upper()
+        # Country / demonym -> nationality OR that country's domestic league.
+        nat = normalize_country(raw)
+        nat_mask = self.pool["nationality"].fillna("").str.strip().str.lower() == nat.lower()
+        code = COUNTRY_LEAGUE.get(nat)
+        return (nat_mask | (league == code)) if code else nat_mask
 
 
 # ---- query parsing & response formatting (reusable, LLM-independent) --------
@@ -426,7 +555,7 @@ def parse_scouting_query(text: str) -> dict:
     q = text.lower().strip()
     ctx: dict = {"intent": "profile_search", "reference_player": None, "role": "",
                  "positions": [], "age_max": 0, "potential_min": 0, "important_features": [],
-                 "limit": 5}
+                 "country": "", "position_group": "", "limit": 5}
 
     # intent
     if re.search(r"replace|replacement|alternative|successor|תחליף|מחליף", q):
@@ -484,7 +613,41 @@ def parse_scouting_query(text: str) -> dict:
         if _kw_match(q, words):
             feats.append(feat)
     ctx["important_features"] = list(dict.fromkeys(feats))
+
+    # country / league constraint ("from Italy", "Brazilian", "in the Premier League")
+    ctx["country"] = _detect_country(text, q)
+
+    # coarse position group when no specific role was detected ("attacking player")
+    if not ctx["role"]:
+        for grp, words in GROUP_KEYWORDS.items():
+            if _kw_match(q, words):
+                ctx["position_group"] = grp
+                break
     return ctx
+
+
+def _detect_country(text: str, q: str) -> str:
+    """Detect a country or league mention in any language; returns a country name,
+    a spoken league name, or '' (the engine's _region_mask resolves it)."""
+    # 0. "European league" / "ליגה אירופאית" -> the major European leagues.
+    for tok in EUROPE_TOKENS:
+        if tok in q or tok in text:
+            return "Europe"
+    # 1. Explicit spoken league name (English in q, Hebrew in original text).
+    for name in LEAGUE_NAME_TO_CODE:
+        if name in q or name in text:
+            return name
+    # 2. Demonym / localized country name (skip <3-char aliases to avoid false hits).
+    for alias, canon in COUNTRY_ALIASES.items():
+        if len(alias) < 3:
+            continue
+        if re.search(rf"\b{re.escape(alias)}\b", q) or alias in text:
+            return canon
+    # 3. Bare country name ("from Italy", "Spain players").
+    for c in KNOWN_COUNTRIES:
+        if re.search(rf"\b{re.escape(c.lower())}\b", q):
+            return c
+    return ""
 
 
 def generate_scouting_response(result: dict) -> str:
@@ -494,21 +657,24 @@ def generate_scouting_response(result: dict) -> str:
     t = result["type"]
     _flt = result.get("filters", {})
     _ovr_str = (f", OVR ≤ {_flt['max_overall']}" if _flt.get("max_overall") else "")
+    _country = _flt.get("country")
+    _from_str = f" from {_country}" if _country else ""
     # Profile header: use a ranking-style label for named positions ("top goalkeepers"),
     # and the generic "best matches" label only for free-text custom profiles.
     _role = result.get("role") or ""
     _traits = ", ".join(result.get("important_features", []))
     if t == "profile" and _role in ROLE_POSITIONS:
-        _profile_head = f"Top {_role.replace('_', '-')}s ranked by {_traits}:" if _traits else f"Top-rated {_role.replace('_', '-')}s:"
+        _profile_head = (f"Top {_role.replace('_', '-')}s{_from_str} ranked by {_traits}:"
+                         if _traits else f"Top-rated {_role.replace('_', '-')}s{_from_str}:")
     else:
-        _profile_head = f"Best matches for profile '{_role}' (key traits: {_traits}):"
+        _profile_head = f"Best matches for profile '{_role}'{_from_str} (key traits: {_traits}):"
     head = {
         "similar": f"Players most similar to {result.get('reference')} "
                    f"(role: {_role}, archetype: {result.get('reference_archetype')}):",
         "replacement": f"Replacement options for {result.get('reference')}"
                        + (f" (excluding {result.get('club')})" if result.get("club") else "") + ":",
         "profile": _profile_head,
-        "wonderkid": (f"Top wonderkids ({_role}, "
+        "wonderkid": (f"Top wonderkids ({_role}{_from_str}, "
                       f"age ≤ {_flt.get('age_max')}, "
                       f"potential ≥ {_flt.get('potential_min')}"
                       f"{_ovr_str}):"),

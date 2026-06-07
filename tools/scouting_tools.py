@@ -35,7 +35,7 @@ def make_scouting_tools(scout: ScoutingEngine) -> list:
 
     @tool
     def find_replacement(player_name: str, club: str = "", max_age: int = 0,
-                         role: str = "") -> str:
+                         role: str = "", country: str = "") -> str:
         """
         Find REPLACEMENT options for a reference player (similarity + potential + current
         ability + age fit + data reliability, same role). Use for "who can replace X".
@@ -45,45 +45,58 @@ def make_scouting_tools(scout: ScoutingEngine) -> list:
         role: optional role override if the player's detected position is wrong, e.g.
               "fullback" for a left-back, "centre_back", "winger", "striker", "playmaker".
               Use when the user specifies the position they want.
+        country: optional nationality OR league filter for the replacement, e.g. "Italy",
+              "Premier League" (same rules as search_by_profile).
         """
         result, err = scout.find_replacement(player_name, club=club, max_age=max_age or 0,
-                                             role_override=normalize_role(role) or role)
+                                             role_override=normalize_role(role) or role,
+                                             country=country or "")
         return err or generate_scouting_response(result)
 
     @tool
     def search_by_profile(role: str = "", positions: str = "", max_age: int = 0,
                           min_potential: int = 0, important_features: str = "",
-                          description: str = "", limit: int = 5) -> str:
+                          country: str = "", description: str = "", limit: int = 5) -> str:
         """
         Find players matching a described PROFILE (no reference player). Use for free-text
-        scouting like "a creative attacker with goal-scoring ability and high potential".
+        scouting like "a creative attacker with goal-scoring ability and high potential"
+        or "an attacking player from Italy".
         role: one of striker, creative_attacker, winger, playmaker, box_to_box,
               defensive_midfielder, centre_back, fullback, left_back, right_back, goalkeeper.
         positions: optional comma list of FIFA codes (e.g. "cam,rw,st").
         max_age, min_potential: optional numeric filters.
         important_features: comma list from pace,shooting,passing,dribbling,defending,
               physic,potential,goals_per90,assists_per90.
+        country: optional nationality OR league the player must be from. ALWAYS pass this
+              when the user names a place. Use the English COUNTRY for nationality asks
+              ("from Italy"/"Italian" -> "Italy", "from Brazil" -> "Brazil") and the
+              English LEAGUE name for league asks ("Premier League", "Serie A", "La Liga",
+              "Bundesliga", "Ligue 1"). A country matches that nationality OR its domestic
+              league; a league name matches that league only.
         description: the raw user description (used to auto-fill anything left blank).
         limit: number of results to return (default 5).
         """
         feats = _features(important_features)
-        if description and not (role or feats):
+        position_group = ""
+        if description:
             ctx = parse_scouting_query(description)
             role = role or ctx.get("role", "")
             feats = feats or ctx.get("important_features", [])
             max_age = max_age or ctx.get("age_max", 0)
             min_potential = min_potential or ctx.get("potential_min", 0)
+            country = country or ctx.get("country", "")
+            position_group = ctx.get("position_group", "")
         result, err = scout.search_by_profile(
             role=role, positions=_positions(positions), age_max=max_age or 0,
             potential_min=min_potential or 0, important_features=feats,
-            limit=max(1, limit or 5),
+            country=country or "", position_group=position_group, limit=max(1, limit or 5),
         )
         return err or generate_scouting_response(result)
 
     @tool
     def find_wonderkids(role: str = "", positions: str = "", max_age: int = 21,
                         min_potential: int = 80, important_features: str = "",
-                        max_overall: int = 0, limit: int = 5) -> str:
+                        max_overall: int = 0, country: str = "", limit: int = 5) -> str:
         """
         Find young high-POTENTIAL prospects (wonderkids). Use for "best young prospects /
         wonderkids", optionally by role/position. Ranking is potential-led.
@@ -93,11 +106,13 @@ def make_scouting_tools(scout: ScoutingEngine) -> list:
         important_features: optional comma list of features to emphasise.
         max_overall: optional overall rating ceiling — use to find lesser-known / cheaper
                      wonderkids, e.g. max_overall=72 filters out already-expensive stars.
+        country: optional nationality OR league filter, e.g. "Spain", "Brazil",
+                 "Premier League" (same rules as search_by_profile).
         """
         result, err = scout.find_wonderkids(
             role=role, positions=_positions(positions), age_max=max_age or 21,
             potential_min=min_potential or 80, important_features=_features(important_features),
-            max_overall=max_overall or 0, limit=max(1, limit or 5),
+            max_overall=max_overall or 0, country=country or "", limit=max(1, limit or 5),
         )
         return err or generate_scouting_response(result)
 

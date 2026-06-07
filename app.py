@@ -212,6 +212,26 @@ def league_tables():
     return jsonify({"leagues": _live_tables.get_tables(os.getenv("FOOTBALL_DATA_API_KEY", ""))})
 
 
+@app.route("/warmup", methods=["GET", "POST"])
+def warmup():
+    """Pre-compute + cache the fixed demo questions so they answer INSTANTLY on stage.
+    Call this once before the presentation (e.g. open /warmup in the browser). Runs each
+    demo query through the agent one time (uses the LLM once each), then every later ask
+    of those questions is served from cache with no API call. Returns a timing report."""
+    t0 = _time.time()
+    report = _agent.warmup()
+    total = round(_time.time() - t0, 1)
+    ok = sum(1 for r in report if r["ok"])
+    return jsonify({
+        "ok": ok == len(report),
+        "cached": ok,
+        "total": len(report),
+        "warmup_seconds": total,
+        "cache_size": len(_agent.response_cache),
+        "results": report,
+    })
+
+
 @app.route("/healthz")
 def healthz():
     """Health check for hosting platforms."""
@@ -219,7 +239,8 @@ def healthz():
         "ok": True,
         "players": int(len(_engine.df)),
         "world_cup_matches": int(len(_schedule)),
-        "gemini_configured": bool(os.getenv("GEMINI_API_KEY")),
+        "openai_configured": bool(os.getenv("OPENAI_API_KEY")),
+        "demo_cached": len(_agent.response_cache),
         "version": _VERSION["label"],
     })
 

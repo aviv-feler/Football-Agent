@@ -1005,18 +1005,25 @@
     return html.replace(/(<br>\s*)+$/,'');
   }
 
-  /* ── Method pills — map 🔍 Method: text → course-approved algorithm pills ── */
+  /* ── Method pills — map 🔍 Method: text → the ACTUAL algorithm pill.
+     Each method maps to an HONEST label (a Method line may yield several pills,
+     e.g. "Random Forest + Gradient Boosting + Poisson"). Order is cosmetic; all
+     matches are collected. ── */
   const PILL_MAP = [
-    { match: /cosine\s*sim/i,        label: 'Cosine Similarity' },
-    { match: /jaccard/i,              label: 'Jaccard Similarity' },
-    { match: /k.?means/i,             label: 'K-Means Clustering' },
-    { match: /content.?based/i,       label: 'Content-Based Filtering' },
-    { match: /z.?score|anomaly/i,     label: 'Anomaly Detection (Z-Score)' },
-    { match: /logistic|classif|random\s*forest|gradient\s*boost|poisson|softmax|elo/i, label: 'Logistic Regression' },
-    { match: /collaborative/i,        label: 'Collaborative Filtering' },
+    { match: /cosine\s*sim/i,             label: 'Cosine Similarity' },
+    { match: /jaccard/i,                  label: 'Jaccard Similarity' },
+    { match: /k.?means/i,                 label: 'K-Means Clustering' },
+    { match: /z.?score|anomaly/i,         label: 'Anomaly Detection (Z-Score)' },
+    { match: /random\s*forest/i,          label: 'Random Forest' },
+    { match: /gradient\s*boost/i,         label: 'Gradient Boosting' },
+    { match: /logistic\s*regression/i,    label: 'Logistic Regression' },
+    { match: /softmax/i,                  label: 'Softmax' },
+    { match: /poisson/i,                  label: 'Poisson Model' },
+    { match: /monte\s*carlo/i,            label: 'Monte Carlo Simulation' },
+    { match: /\belo\b/i,                  label: 'Elo Rating' },
+    { match: /content.?based|weighted\s*(?:sim|euclid)|feature\s*vector/i, label: 'Content-Based Filtering' },
+    { match: /collaborative/i,            label: 'Collaborative Filtering' },
     { match: /live\s*api|football.data/i, label: 'Live API' },
-    { match: /monte\s*carlo|simulat/i, label: 'Logistic Regression' },
-    { match: /weighted\s*sim|feature\s*vector/i, label: 'Content-Based Filtering' },
   ];
 
   function extractPills(text) {

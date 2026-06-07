@@ -79,8 +79,8 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame, c
             + (f"{team1} has the stronger combined profile and is the favorite." if s1 > s2 + 0.05
                else f"{team2} has the stronger combined profile and is the favorite." if s2 > s1 + 0.05
                else "The teams are close, so this projects as a tight match.")
-            + "\n\n🔍 Method: Logistic Regression on hybrid national-team strength = current "
-              "squad market value blended with historical World Cup tournament ratings."
+            + "\n\n🔍 Method: Softmax (logistic) probabilities on hybrid national-team strength = current "
+              "squad market value blended with Elo from historical World Cup results."
         )
 
     @tool

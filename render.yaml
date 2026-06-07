@@ -4,9 +4,19 @@ services:
     env: python
     pythonVersion: 3.11.9
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    # --bind $PORT: Render routes traffic to $PORT (default 10000); plain "gunicorn app:app"
+    #   binds 8000 and the service is unreachable.
+    # --timeout 120: heavy startup (load 48k players + 5k WC Monte-Carlo warm-up) can exceed
+    #   gunicorn's default 30s and get the worker SIGKILLed in a boot loop.
+    # --workers 1 --preload: load everything once (fits Render's 512 MB free tier).
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120 --preload
     envVars:
-      - key: GEMINI_API_KEY
+      # OpenAI key — set the secret value in the Render dashboard.
+      - key: OPENAI_API_KEY
         sync: false
+      # Primary model (now read by the code). Change here or in the dashboard without
+      # editing code; the app appends gpt-4o-mini as an automatic fallback.
+      - key: OPENAI_MODEL
+        value: gpt-5-mini
       - key: FOOTBALL_DATA_API_KEY
         sync: false

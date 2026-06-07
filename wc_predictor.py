@@ -484,8 +484,9 @@ def format_group_prediction(result: dict) -> str:
     for m in result["match_predictions"]:
         lines.append(f"• {m['match']}: **{m['predicted']}** ({m['p_a']} / {m['p_draw']} / {m['p_b']})")
     lines.append(f"\n_{result['note']}_")
-    lines.append("\n🔍 Method: Neutral-ground match probabilities from hybrid squad-value + historical tournament ratings. "
-                 "Group standings from expected-value simulation of all 6 group matches.")
+    lines.append("\n🔍 Method: Per-match win/draw/loss via a logistic (softmax) function on hybrid "
+                 "squad-value + Elo strength; expected goals via Poisson. Group standings from an "
+                 "expected-value simulation of all 6 group matches.")
     return "\n".join(lines)
 
 
@@ -499,9 +500,9 @@ def format_wc_winner(result: dict) -> str:
             f"{i:>2}. **{c['team']:<22}** {c['win_prob']:>5}% to win  "
             f"| {c['semi_prob']:>5}% to reach semi  {bar}"
         )
-    lines.append(f"\n🔍 Method: Logistic Regression on hybrid squad-strength + historical WC ratings. "
-                 f"Tournament simulated with {n:,} Monte Carlo runs. Group stage simulated "
-                 "with Poisson goals; knockout rounds use head-to-head win probabilities.")
+    lines.append(f"\n🔍 Method: Monte Carlo tournament simulation ({n:,} runs). Group goals via "
+                 "Poisson distribution; knockout match outcomes via a logistic (softmax) function on "
+                 "hybrid team strength = squad market value blended with Elo from historical WC results.")
     return "\n".join(lines)
 
 
@@ -537,7 +538,8 @@ def format_wc_match(result: dict) -> str:
         f"Expected goals: {a} {result['xg_a']} — {b} {result['xg_b']}",
         f"Team strength: {a} {result['strength_a']} vs {b} {result['strength_b']} (scale 0–1)",
         "",
-        f"🔍 Method: Logistic Regression on hybrid squad-value + historical WC tournament ratings. "
-        f"Scoreline from context-aware Poisson distribution (match profile: {result['profile'].replace('_',' ')})."
+        f"🔍 Method: Win/draw/loss via a logistic (softmax) function on hybrid team strength = squad "
+        f"market value blended with Elo from historical WC results. Scoreline from context-aware "
+        f"Poisson distribution (match profile: {result['profile'].replace('_',' ')})."
     ]
     return "\n".join(lines)
