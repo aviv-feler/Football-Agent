@@ -104,22 +104,39 @@ def make_get_live_standings_tool():
                     table_data = standings[0].get("table", []) if standings else []
 
                 if table_data:
-                    lines = [f"**{competition} standings | season: {season_str}**\n",
-                             f"{'#':<3} {'Team':<25} {'P':<4} {'W':<4} {'D':<4} {'L':<4} {'GF':<6} {'GA':<6} {'Pts':<5}"]
-                    lines.append("-" * 60)
+                    from viz import embed_viz
+                    champion = table_data[0].get("team", {}).get("name", "") if table_data else ""
+                    top_pts  = table_data[0].get("points", 0) if table_data else 0
+                    played   = table_data[0].get("playedGames", 0) if table_data else 0
+                    bottom   = table_data[-1].get("team", {}).get("name", "") if table_data else ""
+                    # Plain text is a concise summary only — the viz card shows the full table.
+                    # Avoid duplicating all 20 rows in both text and card.
+                    summary = (
+                        f"**{competition} | {season_str}**\n"
+                        f"🏆 Leader: {champion} — {top_pts} pts ({played} played)\n"
+                        f"🔻 Bottom: {bottom}\n"
+                        f"\n🔍 Method: Live standings lookup via football-data.org API."
+                    )
+                    viz_rows = []
                     for row in table_data[:20]:
-                        pos   = row.get("position", "")
-                        team  = row.get("team", {}).get("name", "")[:24]
-                        played= row.get("playedGames", 0)
-                        won   = row.get("won", 0)
-                        draw  = row.get("draw", 0)
-                        lost  = row.get("lost", 0)
-                        gf    = row.get("goalsFor", 0)
-                        ga    = row.get("goalsAgainst", 0)
-                        pts   = row.get("points", 0)
-                        lines.append(f"{pos:<3} {team:<25} {played:<4} {won:<4} {draw:<4} {lost:<4} {gf:<6} {ga:<6} {pts:<5}")
-                    lines.append("\n🔍 Method: Live standings lookup via football-data.org API.")
-                    return "\n".join(lines)
+                        pos  = row.get("position", "")
+                        team = row.get("team", {}).get("name", "")
+                        p    = row.get("playedGames", 0)
+                        w, d, l = row.get("won", 0), row.get("draw", 0), row.get("lost", 0)
+                        gf, ga  = row.get("goalsFor", 0), row.get("goalsAgainst", 0)
+                        pts  = row.get("points", 0)
+                        viz_rows.append({
+                            "pos": pos, "team": team, "p": p, "w": w, "d": d,
+                            "l": l, "gf": gf, "ga": ga, "gd": gf - ga, "pts": pts,
+                        })
+                    viz = {
+                        "type": "standings",
+                        "competition": competition,
+                        "season": season_str,
+                        "champion": champion,
+                        "table": viz_rows,
+                    }
+                    return embed_viz(summary, viz)
 
             # fallback: fixtures
             resp2 = requests.get(

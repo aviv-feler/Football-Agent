@@ -417,6 +417,18 @@
   .cmp-side i { position: absolute; top: 0; bottom: 0; right: 0; background: var(--blue); border-radius: 4px; }
   .cmp-side.r i { left: 0; right: auto; background: var(--violet); }
 
+  /* standings table */
+  .st-table { width: 100%; border-collapse: collapse; font-size: .76rem; font-variant-numeric: tabular-nums; }
+  .st-table thead th { color: var(--text-dim); font-weight: 600; text-align: right; padding: 3px 5px 5px; border-bottom: 1px solid var(--hairline); font-size: .67rem; letter-spacing: .6px; text-transform: uppercase; }
+  .st-table thead th:nth-child(2) { text-align: left; }
+  .st-table tbody td { padding: 5px 5px; border-bottom: 1px solid var(--hairline); text-align: right; color: var(--text-muted); }
+  .st-table tbody td:first-child { color: var(--text-dim); width: 22px; }
+  .st-table tbody td:nth-child(2) { text-align: left; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+  .st-table tbody td:last-child { font-weight: 700; color: #eaf0ff; }
+  .st-row-1 td { background: rgba(80,200,120,.06); }
+  .st-row-1 td:nth-child(2) { color: #7ef5a0; }
+  .st-champ { font-size: .7rem; color: var(--text-dim); margin-top: 7px; border-top: 1px solid var(--hairline); padding-top: 5px; }
+
   /* ranking + similarity bars */
   .rk-row { display: grid; grid-template-columns: 1.1fr 1.3fr auto; align-items: center; gap: 10px; padding: 4px 0; font-size: .82rem; }
   .rk-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1080,6 +1092,30 @@
     </div>`);
   }
 
+  function vizStandings(v) {
+    const rows = (v.table || []).map((r, i) => {
+      const gd = (r.gd >= 0 ? '+' : '') + r.gd;
+      return `<tr class="${i === 0 ? 'st-row-1' : ''}">
+        <td>${r.pos}</td>
+        <td title="${_esc(r.team)}">${_esc(r.team)}</td>
+        <td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td>
+        <td>${gd}</td><td>${r.pts}</td>
+      </tr>`;
+    }).join('');
+    const champ = v.champion ? `<div class="st-champ">🏆 Champion: <b>${_esc(v.champion)}</b></div>` : '';
+    const season = v.season ? ` <span style="opacity:.55;font-size:.85em">${_esc(v.season)}</span>` : '';
+    return elFrom(`<div class="viz-card st">
+      <div class="viz-title">${_esc(v.competition)}${season}</div>
+      <table class="st-table">
+        <thead><tr>
+          <th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${champ}
+    </div>`);
+  }
+
   function renderVizCard(v) {
     if (!v || !v.type) return null;
     try {
@@ -1087,6 +1123,7 @@
       if (v.type === 'ranking')    return vizRanking(v);
       if (v.type === 'similarity') return vizSimilarity(v);
       if (v.type === 'profile')    return vizProfile(v);
+      if (v.type === 'standings')  return vizStandings(v);
     } catch (e) { console.warn('viz render failed', e); }
     return null;
   }

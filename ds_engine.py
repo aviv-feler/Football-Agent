@@ -77,9 +77,23 @@ class DSEngine:
             contains = self.df.index[self.names_norm.str.contains(q, na=False, regex=False)]
             if len(contains):
                 return self._most_prominent(contains)
-        # 3. Whole-word token match (so "ronado" does NOT match "coronado").
-        for part in q.split():
-            if len(part) < 3:
+        # 2.5 All-token whole-word match for multi-word names ("marc cucurella" must contain
+        #     BOTH "marc" AND "cucurella", preventing "marc" alone matching "marc guéhi").
+        if " " in q:
+            words = [p for p in q.split() if len(p) >= 3]
+            if len(words) >= 2:
+                mask = pd.Series(True, index=self.df.index)
+                for w in words:
+                    mask = mask & self.names_norm.str.contains(
+                        rf"\b{re.escape(w)}\b", na=False, regex=True
+                    )
+                all_match = self.df.index[mask]
+                if len(all_match):
+                    return self._most_prominent(all_match)
+        # 3. Whole-word token match — try LONGEST tokens first so a distinctive surname like
+        #    "cucurella" (9 chars) is matched before a common first name like "marc" (4 chars).
+        for part in sorted(q.split(), key=len, reverse=True):
+            if len(part) < 4:
                 continue
             m = self.df.index[self.names_norm.str.contains(rf"\b{re.escape(part)}\b", na=False, regex=True)]
             if len(m):

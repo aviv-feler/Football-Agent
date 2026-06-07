@@ -8,22 +8,15 @@ numpy==1.26.4
 pandas==2.2.2
 scikit-learn==1.5.1
 
-# LangChain ecosystem — pinned to exact working versions
+# LangChain ecosystem
 langchain==0.3.30
 langchain-core==0.3.86
 langchain-community==0.3.27
-langchain-google-genai==2.1.12
+langchain-openai==0.3.24
 langchain-text-splitters==0.3.11
 
-# Google AI dependencies
-google-ai-generativelanguage==0.12.0
-google-api-core==2.30.3
-google-auth==2.53.0
-googleapis-common-protos==1.75.0
-grpcio==1.81.0
-grpcio-status==1.81.0
-proto-plus==1.28.0
-protobuf==7.35.0
+# OpenAI
+openai==1.93.0
 
 # HTTP / async
 httpx==0.28.1

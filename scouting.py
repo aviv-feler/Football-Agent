@@ -44,6 +44,8 @@ WEIGHT_PRESETS: dict[str, dict[str, float]] = {
     "defensive_midfielder": {"defending": .28, "physic": .18, "passing": .18, "minutes": .10, "potential": .10, "pace": .06, "assists_per90": .05, "age": .05},
     "centre_back":          {"defending": .30, "physic": .22, "height": .15, "pace": .10, "passing": .10, "potential": .08, "age": .05},
     "fullback":             {"pace": .22, "defending": .22, "physic": .15, "dribbling": .13, "passing": .13, "potential": .10, "age": .05},
+    "left_back":            {"pace": .22, "defending": .22, "physic": .15, "dribbling": .13, "passing": .13, "potential": .10, "age": .05},
+    "right_back":           {"pace": .22, "defending": .22, "physic": .15, "dribbling": .13, "passing": .13, "potential": .10, "age": .05},
     "goalkeeper":           {"overall": .50, "potential": .30, "height": .10, "age": .10},
     "default":              {"overall": .20, "potential": .15, "shooting": .12, "passing": .12, "dribbling": .12, "defending": .12, "pace": .10, "physic": .07},
 }
@@ -64,7 +66,7 @@ SUBPOS_ROLE = {
     "Right Winger": "winger", "Left Winger": "winger", "Right Midfield": "winger", "Left Midfield": "winger",
     "Attacking Midfield": "creative_attacker", "Central Midfield": "box_to_box",
     "Defensive Midfield": "defensive_midfielder", "Centre-Back": "centre_back",
-    "Left-Back": "fullback", "Right-Back": "fullback", "Goalkeeper": "goalkeeper",
+    "Left-Back": "left_back", "Right-Back": "right_back", "Goalkeeper": "goalkeeper",
 }
 # Role -> (position group, allowed sub-positions) for candidate filtering.
 ROLE_POSITIONS = {
@@ -75,21 +77,31 @@ ROLE_POSITIONS = {
     "box_to_box": ("Midfield", {"Central Midfield", "Attacking Midfield", "Defensive Midfield"}),
     "defensive_midfielder": ("Midfield", {"Defensive Midfield", "Central Midfield"}),
     "centre_back": ("Defender", {"Centre-Back"}),
-    "fullback": ("Defender", {"Left-Back", "Right-Back"}),
+    "fullback": ("Defender", {"Left-Back", "Right-Back"}),   # both sides — use when side unknown
+    "left_back":  ("Defender", {"Left-Back"}),               # explicit left side
+    "right_back": ("Defender", {"Right-Back"}),              # explicit right side
     "goalkeeper": ("Goalkeeper", {"Goalkeeper"}),
 }
 
 # Free-text role / position keywords -> role.
 ROLE_KEYWORDS = {
-    "striker": ["striker", "finisher", "poacher", "number 9", "goalscorer", "goal scorer", "cf", "st", "centre-forward", "centre forward"],
-    "winger": ["winger", "wing", "wide forward", "rw", "lw", "fast and creative winger"],
-    "creative_attacker": ["creative attack", "creative forward", "attacking midfielder", "playmaker", "number 10", "cam", "creative attacking"],
-    "playmaker": ["deep playmaker", "passer", "regista"],
-    "defensive_midfielder": ["defensive midfield", "holding midfield", "ball winner", "ball-winner", "cdm", "dm", "destroyer", "physical defensive midfielder"],
-    "box_to_box": ["box to box", "box-to-box", "central midfield", "complete midfield"],
-    "centre_back": ["centre back", "center back", "centre-back", "defender", "cb", "defensive wonderkid", "defensive player", "stopper"],
-    "fullback": ["full back", "full-back", "fullback", "wing back", "wing-back", "rb", "lb"],
-    "goalkeeper": ["goalkeeper", "keeper", "gk"],
+    "striker": ["striker", "finisher", "poacher", "number 9", "goalscorer", "goal scorer", "cf", "st", "centre-forward", "centre forward",
+                "חלוץ", "חלוצים", "מבקיע", "מספר 9"],
+    "winger": ["winger", "wing", "wide forward", "rw", "lw", "fast and creative winger",
+               "קיצוני", "קיצונים", "כנף", "כנפיים"],
+    "creative_attacker": ["creative attack", "creative forward", "attacking midfielder", "playmaker", "number 10", "cam", "creative attacking",
+                          "תוקף יוצר", "קשר התקפי"],
+    "playmaker": ["deep playmaker", "passer", "regista", "מסדר", "מחלק"],
+    "defensive_midfielder": ["defensive midfield", "holding midfield", "ball winner", "ball-winner", "cdm", "dm", "destroyer", "physical defensive midfielder",
+                             "קשר הגנתי", "קשר מגן"],
+    "box_to_box": ["box to box", "box-to-box", "central midfield", "complete midfield",
+                   "קשר מרכזי", "קשר"],
+    "centre_back": ["centre back", "center back", "centre-back", "defender", "cb", "defensive wonderkid", "defensive player", "stopper",
+                    "בלם", "בלמים", "מגן מרכזי"],
+    "fullback":  ["full back", "full-back", "fullback", "wing back", "wing-back", "מגן צד"],
+    "left_back":  ["left back", "left-back", "lb", "lwb", "left wing back", "מגן שמאל", "מגן שמאלי"],
+    "right_back": ["right back", "right-back", "rb", "rwb", "right wing back", "מגן ימין", "מגן ימני"],
+    "goalkeeper": ["goalkeeper", "keeper", "gk", "שוער", "שוערים"],
 }
 # Trait keywords -> important scouting features.
 TRAIT_KEYWORDS = {
@@ -143,7 +155,13 @@ class ScoutingEngine:
 
     def role_of(self, idx: int) -> str:
         row = self.pool.loc[idx]
-        return ARCHETYPE_ROLE.get(row.get("archetype")) or SUBPOS_ROLE.get(row.get("sub_position")) or "default"
+        sub_role = SUBPOS_ROLE.get(row.get("sub_position"))
+        # Side-specific positions (Left-Back / Right-Back) take priority over the K-Means
+        # archetype, which doesn't distinguish sides — a "Ball-playing defender" could be
+        # a LCB or a true LB. The sub_position column is authoritative for lateral roles.
+        if sub_role in ("left_back", "right_back"):
+            return sub_role
+        return ARCHETYPE_ROLE.get(row.get("archetype")) or sub_role or "default"
 
     # ---- vectors & target profiles -----------------------------------------
     def build_player_vector(self, idx: int) -> dict:
@@ -203,7 +221,11 @@ class ScoutingEngine:
                   important: list[str] | None = None) -> tuple[list[str], list[str]]:
         row = self.pool.loc[idx]
         focus = important or list(WEIGHT_PRESETS.get(role, WEIGHT_PRESETS["default"]).keys())
-        focus = [f for f in focus if f in ("pace", "shooting", "passing", "dribbling", "defending", "physic")]
+        # Goalkeepers: outfield attributes are meaningless — show overall/potential/physic instead.
+        if role == "goalkeeper":
+            focus = [f for f in focus if f in ("overall", "potential", "physic")]
+        else:
+            focus = [f for f in focus if f in ("pace", "shooting", "passing", "dribbling", "defending", "physic")]
         raw = {f: row.get(SCOUT_FEATURES[f]) for f in focus}
         raw = {f: v for f, v in raw.items() if pd.notna(v)}
         strengths = sorted(raw, key=lambda f: raw[f], reverse=True)[:3]
@@ -315,7 +337,8 @@ class ScoutingEngine:
         ranked = self.rank_candidates(cand, sim, composite, {"mode": "young", "age_max": age_max}, limit)
         cards = [self._card(it, role or "default", important=important) for it in ranked]
         return {"type": "wonderkid", "role": role or "any position", "important_features": important,
-                "filters": {"age_max": age_max, "potential_min": potential_min},
+                "filters": {"age_max": age_max, "potential_min": potential_min,
+                            "max_overall": max_overall or None},
                 "candidates": cards}, None
 
     def _position_mask(self, role: str, positions) -> pd.Series:
@@ -337,6 +360,40 @@ _FIFA_POS = {
     "cam": "Attacking Midfield", "cm": "Central Midfield", "cdm": "Defensive Midfield",
     "cb": "Centre-Back", "lb": "Left-Back", "rb": "Right-Back", "gk": "Goalkeeper",
 }
+
+
+_POSITION_TO_ROLE: dict[str, str] = {
+    "left-back": "left_back",  "left back": "left_back",  "lb": "left_back",
+    "lwb": "left_back",        "left wing back": "left_back",
+    "right-back": "right_back","right back": "right_back","rb": "right_back",
+    "rwb": "right_back",       "right wing back": "right_back",
+    "full back": "fullback",   "fullback": "fullback",    "wing back": "fullback",
+    "wing-back": "fullback",
+    "centre-back": "centre_back", "center-back": "centre_back", "centre back": "centre_back",
+    "center back": "centre_back", "central defender": "centre_back", "cb": "centre_back",
+    "central midfield": "box_to_box", "cm": "box_to_box", "box to box": "box_to_box",
+    "defensive midfield": "defensive_midfielder", "cdm": "defensive_midfielder",
+    "holding mid": "defensive_midfielder", "holding midfielder": "defensive_midfielder",
+    "attacking midfield": "creative_attacker", "cam": "creative_attacker",
+    "attacking mid": "creative_attacker", "number 10": "creative_attacker", "no 10": "creative_attacker",
+    "striker": "striker", "centre forward": "striker", "center forward": "striker",
+    "st": "striker", "cf": "striker", "number 9": "striker",
+    "winger": "winger", "lw": "winger", "rw": "winger", "wide forward": "winger",
+    "goalkeeper": "goalkeeper", "gk": "goalkeeper", "keeper": "goalkeeper",
+    "playmaker": "playmaker",
+}
+
+
+def normalize_role(role_str: str) -> str:
+    """Map a human-readable position/role string to the internal ROLE_POSITIONS key."""
+    if not role_str:
+        return ""
+    key = role_str.strip().lower()
+    if key in _POSITION_TO_ROLE:
+        return _POSITION_TO_ROLE[key]
+    if key in ROLE_POSITIONS:
+        return key
+    return ""
 
 
 def _positions_to_subpositions(positions) -> set[str]:
@@ -368,7 +425,8 @@ def parse_scouting_query(text: str) -> dict:
     """
     q = text.lower().strip()
     ctx: dict = {"intent": "profile_search", "reference_player": None, "role": "",
-                 "positions": [], "age_max": 0, "potential_min": 0, "important_features": []}
+                 "positions": [], "age_max": 0, "potential_min": 0, "important_features": [],
+                 "limit": 5}
 
     # intent
     if re.search(r"replace|replacement|alternative|successor|תחליף|מחליף", q):
@@ -378,11 +436,21 @@ def parse_scouting_query(text: str) -> dict:
     elif re.search(r"wonderkid|wonder kid|young.*(prospect|talent|potential)|prospect|כשרון צעיר|עתודה", q):
         ctx["intent"] = "wonderkid"
 
-    # reference player
+    # reference player — English patterns then Hebrew patterns
     m = re.search(r"(?:replace(?:ment for)?|similar to|like|plays like|for)\s+([a-zà-ÿ.\-' ]{3,40})", text, re.IGNORECASE)
     if m:
         ref = re.split(r"\b(at|in|for|from|with)\b", m.group(1).strip(), 1)[0].strip(" ?.,")
         ctx["reference_player"] = ref or None
+    if ctx["reference_player"] is None:
+        # Hebrew: "מחליף ל<player>" / "דומה ל<player>" / "כמו <player>"
+        m_he = re.search(
+            r"(?:מחליף|תחליף|דומה|דומים)\s+ל(.{2,40}?)(?:\s*$|\s*\?|\s+ב|\s+עבור|\s+מ)",
+            text,
+        )
+        if not m_he:
+            m_he = re.search(r"כמו\s+(.{2,40}?)(?:\s*$|\s*\?|\s+ב)", text)
+        if m_he:
+            ctx["reference_player"] = m_he.group(1).strip(" ?.,") or None
     mclub = re.search(r"\bat\s+([A-Za-zÀ-ÿ.\-' ]{3,30})", text)
     if mclub:
         ctx["club"] = mclub.group(1).strip(" ?.,")
@@ -392,6 +460,11 @@ def parse_scouting_query(text: str) -> dict:
         if _kw_match(q, words):
             ctx["role"] = role
             break
+
+    # requested result count ("top 3 strikers", "best 5 players")
+    cnt = re.search(r"\b(?:top|best|הכי טוב(?:ים)?|ה-?)\s*(\d+)\b|\b(\d+)\s+(?:best|top|player|striker|forward|defender|goalkeeper)", q)
+    if cnt:
+        ctx["limit"] = int(cnt.group(1) or cnt.group(2))
 
     # age / potential / wonderkid defaults
     am = re.search(r"(?:under|below|younger than|max age|age)\s*(\d{2})", q) or re.search(r"u(\d{2})\b", q)
@@ -419,24 +492,42 @@ def generate_scouting_response(result: dict) -> str:
     if not result or not result.get("candidates"):
         return "No suitable candidates were found."
     t = result["type"]
+    _flt = result.get("filters", {})
+    _ovr_str = (f", OVR ≤ {_flt['max_overall']}" if _flt.get("max_overall") else "")
+    # Profile header: use a ranking-style label for named positions ("top goalkeepers"),
+    # and the generic "best matches" label only for free-text custom profiles.
+    _role = result.get("role") or ""
+    _traits = ", ".join(result.get("important_features", []))
+    if t == "profile" and _role in ROLE_POSITIONS:
+        _profile_head = f"Top {_role.replace('_', '-')}s ranked by {_traits}:" if _traits else f"Top-rated {_role.replace('_', '-')}s:"
+    else:
+        _profile_head = f"Best matches for profile '{_role}' (key traits: {_traits}):"
     head = {
         "similar": f"Players most similar to {result.get('reference')} "
-                   f"(role: {result.get('role')}, archetype: {result.get('reference_archetype')}):",
+                   f"(role: {_role}, archetype: {result.get('reference_archetype')}):",
         "replacement": f"Replacement options for {result.get('reference')}"
                        + (f" (excluding {result.get('club')})" if result.get("club") else "") + ":",
-        "profile": f"Best matches for profile '{result.get('role')}' "
-                   f"(key traits: {', '.join(result.get('important_features', []))}):",
-        "wonderkid": f"Top wonderkids ({result.get('role')}, "
-                     f"age ≤ {result.get('filters', {}).get('age_max')}, "
-                     f"potential ≥ {result.get('filters', {}).get('potential_min')}):",
+        "profile": _profile_head,
+        "wonderkid": (f"Top wonderkids ({_role}, "
+                      f"age ≤ {_flt.get('age_max')}, "
+                      f"potential ≥ {_flt.get('potential_min')}"
+                      f"{_ovr_str}):"),
     }.get(t, "Scouting results:")
+    # For position-ranking queries ("best goalkeeper?") show OVR/score; for profile matching
+    # show fit/similarity. The distinction: profile type with a known ROLE_POSITIONS role
+    # is a ranking, not a profile-matching search.
+    _is_ranking = (t == "profile" and _role in ROLE_POSITIONS)
     lines = [f"**{head}**\n"]
     for i, c in enumerate(result["candidates"], 1):
         ovr = f"OVR {c['overall']}" if c["overall"] else "OVR n/a"
         pot = f"POT {c['potential']}" if c["potential"] else "POT n/a"
+        if _is_ranking:
+            score_str = f"{ovr} / {pot}"
+        else:
+            score_str = f"{ovr} / {pot} | fit {c['fit']}% (similarity {c['similarity']}%)"
         lines.append(
             f"{i}. **{c['player_name']}** — {c['position']} | {c['club']} | {c['nationality']} | age {c['age']}\n"
-            f"   {ovr} / {pot} | archetype: {c['archetype']} | fit {c['fit']}% (similarity {c['similarity']}%)\n"
+            f"   {score_str} | archetype: {c['archetype']}\n"
             f"   strengths: {', '.join(c['strengths'])}"
             + (f" | caveats: {', '.join(c['weaknesses'])}" if c["weaknesses"] else "")
         )
@@ -451,7 +542,7 @@ def generate_scouting_response(result: dict) -> str:
     title = {
         "similar":     f"Most similar to {result.get('reference')}",
         "replacement": f"Replacements for {result.get('reference')}",
-        "profile":     f"Profile matches — {result.get('role')}",
+        "profile":     (f"Top {_role.replace('_', '-')}s" if _role in ROLE_POSITIONS else f"Profile matches — {_role}"),
         "wonderkid":   f"Top wonderkids — {result.get('role')}",
     }.get(t, "Scouting results")
     items = [{

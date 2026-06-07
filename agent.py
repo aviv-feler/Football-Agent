@@ -1,6 +1,6 @@
 """
 agent.py
-ScoutAI agent with direct tool-calling support (LangChain 1.x / langchain-google-genai 4.x).
+ScoutAI agent with direct tool-calling support (LangChain / langchain-openai).
 Search is based on Data Science methods: K-Means clustering, Cosine similarity, Jaccard.
 Internal prompts and tool context are kept in English; final answers are written in
 the user's language.
@@ -12,7 +12,7 @@ import time
 import threading
 import numpy as np
 import pandas as pd
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 
 from data_manager import PLAYER_PROFILES_FILE, load_player_profiles, write_source_map
@@ -28,6 +28,7 @@ from tools.wc_prediction_tools import make_wc_prediction_tools
 from tools.get_national_squad import make_get_national_squad_tool
 from tools.get_live_standings import make_get_live_standings_tool
 from tools.get_top_scorers import make_get_top_scorers_tool
+from tools.get_club_top_scorer import make_get_club_top_scorer_tool
 from tools.world_cup import make_world_cup_tool
 from club_model import ClubModel
 from prediction_engine import PredictionEngine, parse_prediction_query
@@ -61,12 +62,14 @@ HOW TO THINK:
    • "לה ליגה"→"La Liga", "סדרה א"→"Serie A", "בונדסליגה"/"אליפות גרמניה"→"Bundesliga", "ליגה 1"→"Ligue 1"
    • "ריאל מדריד"→"Real Madrid", "ברצלונה"/"barca"→"Barcelona", "מבאפה"/"mbape"→"Kylian Mbappé"
    • "מי זכתה באליפות הליגה האנגלית?" → call get_live_standings("Premier League") and report the leader.
-   CLUB → LEAGUE shortcuts (never ask the user to confirm these):
-   • Arsenal, Chelsea, Liverpool, Man City, Man United, Tottenham, Newcastle → Premier League
-   • Barcelona, Real Madrid, Atletico Madrid, Sevilla → La Liga
-   • Bayern Munich, Dortmund, Leverkusen → Bundesliga
-   • Juventus, Inter, AC Milan, Napoli → Serie A
-   • PSG, Monaco, Lyon, Marseille → Ligue 1
+   • When extracting team names from prediction queries like "Brazil vs England prediction",
+     strip trailing words like "prediction/result/match" — the teams are "Brazil" and "England".
+   CLUB → LEAGUE shortcuts — never ask the user to confirm these mappings:
+   • Arsenal/Chelsea/Liverpool/Man City/Man United/Tottenham/Newcastle → "Premier League"
+   • Barcelona/Real Madrid/Atletico Madrid → "La Liga"
+   • Bayern Munich/Dortmund/Leverkusen → "Bundesliga"
+   • Juventus/Inter/AC Milan/Napoli → "Serie A"
+   • PSG/Monaco/Lyon/Marseille → "Ligue 1"
 4. Call each tool AT MOST ONCE per question. Do NOT call two overlapping tools for the same
    thing (use predict_wc_match OR predict_match, not both; call get_national_squad once).
 5. Use your own football knowledge ONLY for opinion/tactics/history questions
@@ -95,44 +98,34 @@ PREDICTION:
 - predict_player_goals(player_name)   → goals projection for a specific player next season
 - predict_match(team1, team2)         → national/club match result (squad-strength + historical ratings)
 SCOUTING:
-- find_similar_player(player_name)    → cosine-similarity players
-- find_replacement(player_name, club, max_age, role) → replacement candidates; pass role="fullback"/"centre_back"/etc. to override detected position
-- search_by_profile(role, positions, max_age, min_potential, important_features, description) → profile search (no specific player)
-- find_wonderkids(role, positions, max_age, min_potential, max_overall) → young high-potential prospects; use max_overall to filter cheaper/lesser-known players
+- find_similar_player(player_name)    → cosine-similarity players (use for "similar to X / plays like X")
+- find_replacement(player_name, club, max_age, role) → replacement candidates. ALWAYS pass role= when user specifies a position. Map: left-back/LB→"left_back", right-back/RB→"right_back", CB→"centre_back", CDM→"defensive_midfielder", CAM→"creative_attacker", ST→"striker", GK→"goalkeeper". left_back and right_back return ONLY that specific side — use them instead of "fullback" whenever the side is mentioned.
+- search_by_profile(role, positions, max_age, min_potential, important_features, description) → find players matching a description (no reference player). Do NOT use for named players or club stats.
+- find_wonderkids(role, positions, max_age, min_potential, max_overall) → young prospects. Pass max_overall=70 for cheap/affordable/hidden-gem players.
 ANALYSIS:
-- get_player_archetype(player)        → K-Means cluster role + attribute radar card for a SPECIFIC NAMED player
+- get_player_archetype(player)        → NAMED player's archetype + attribute card. Use ONLY for a specific player ("Mbappe's profile", "tell me about Vinicius"). NOT for league tables or rankings.
 - detect_anomalies(filter)            → Z-score over/under-performers
 - compare_players_jaccard(a vs b)     → side-by-side stats + trait overlap
 SQUADS & LIVE DATA:
-- get_national_squad(team)            → OFFICIAL WC 2026 squad / roster / called-up players + each player's CURRENT club (source of truth)
-- get_live_standings(competition)     → LIVE league table (football-data.org)
-- get_top_scorers(competition)        → LIVE CURRENT-SEASON scorers only (football-data.org); cannot return last season
+- get_national_squad(team)            → OFFICIAL WC 2026 squad / roster / called-up players + each player's CURRENT club
+- get_live_standings(competition)     → LIVE league table. Use for "show me the [league] table", "Serie A standings", "who won the league".
+- get_top_scorers(competition)        → LIVE current-season league scorers (football-data.org)
+- get_club_top_scorer(club)           → top scorers for a SPECIFIC CLUB from the player dataset. Use for "who scored most for Chelsea?", "[club]'s top scorer last season".
 - world_cup_info(query)               → WC 2026 schedule and fixtures
 
 TOOL STRATEGY:
-- "Who is in X's squad?", "X's World Cup roster", "is PLAYER called up?", "what club does
-  national-team PLAYER play for now?" → call get_national_squad(X).
-- For LIVE standings/scorers → prefer get_live_standings / get_top_scorers.
-- "who won the league / מי זכתה" → get_live_standings(<league in English>) and report the leader.
-- "show me [PLAYER]'s profile / stats / who is [PLAYER] / tell me about [PLAYER]" →
-  call get_player_archetype(PLAYER). Do NOT use search_by_profile for a named player.
-- "analyze [PLAYER] / everything about [PLAYER]" → call BOTH get_player_archetype AND
-  find_similar_player AND (if attacker/midfielder) predict_player_goals. Chain up to 3 tools.
-- "who is the best/top [position]?" / "best goalkeeper/striker/defender in the world?" →
-  call search_by_profile(role=<role>, important_features="overall,potential") and rank by data.
-  Never refuse this type of question — you have 48k players with ratings, use them.
-- "cheap wonderkids / affordable prospects / low-budget youngsters" →
-  call find_wonderkids with max_overall=72 (or lower) to filter out already-expensive stars.
-- "find a replacement for [PLAYER] as [position]" → pass role=<position> to find_replacement
-  so the search uses the correct position even if the player's data shows a different one.
-- "top scorer last season / מלך השערים בעונה שעברה" → call get_top_scorers (current season
-  is the only live data available); state clearly that the data is from the current season.
-- For predictions, scouting, analysis → use the DS model tools.
-- For broad questions ("who will win WC?") → call ONE relevant tool, then add a short
-  reasoned takeaway on top.
-- MATCH PREDICTIONS: the predicted scoreline IS the primary result. Report it as the
-  prediction. Also mention the win probability but never say "X wins with score Y-Y" when
-  Y-Y is a draw — a draw score means the prediction is a draw, regardless of probabilities.
+- "Show me the [league] table / [league] standings / current [league] table" → get_live_standings. Never route a league table request to get_player_archetype.
+- "Who is in X's squad / X's World Cup roster" → get_national_squad(X).
+- "who won the league / מי זכתה" → get_live_standings(<league>) and report the leader.
+- "[PLAYER]'s profile / tell me about [PLAYER] / [PLAYER]'s stats" → get_player_archetype([PLAYER]). Only when a named real player is mentioned.
+- "who scored the most goals for [CLUB]? / [CLUB]'s top scorer / who scored for [CLUB] last season?" → get_club_top_scorer([CLUB]). This is NEVER a profile search — do not use search_by_profile for club scorer questions.
+- "top scorers in [league] / golden boot" → get_top_scorers([league]).
+- "who is the best [position]? / best goalkeeper / top striker" → search_by_profile(role=..., important_features="overall,potential"). Always answer with data — never refuse.
+- "cheap/affordable/budget wonderkids" → find_wonderkids(max_overall=70).
+- "replacement for [PLAYER] as [position]" → find_replacement(..., role=<normalized role>). If the user corrects a replacement answer ("but he plays left-back", "he is a right-back"), call find_replacement AGAIN with the corrected role — never switch to search_by_profile for a correction.
+- "analyze [PLAYER]" → chain get_player_archetype then find_similar_player.
+- Match predictions: a 1-1 score IS a draw. Never call it a win for either side.
+- SELF-CHECK: Before responding, confirm your answer matches the intent. League table → standings data. Left-back replacement → fullbacks/left-backs in results. Club top scorer → players from that club.
 
 DATA SOURCES & ATTRIBUTION (be honest — never claim a source you didn't use):
 - football-data.org is used ONLY by get_live_standings and get_top_scorers. NEVER cite
@@ -167,15 +160,11 @@ def load_resources():
     return engine, national_strength, schedule
 
 
-# Model rotation. Each Gemini model may have a separate free-tier quota.
+# OpenAI model chain. gpt-5-mini is the primary; gpt-4o-mini is a cheaper fallback used
+# only if the primary hits a rate limit.
 MODEL_CHAIN = [
-    "gemini-2.5-flash",        # ראשי — חכם יותר לניתוב וניסוח
-    "gemini-flash-latest",     # גיבוי באותה רמה
-    "gemini-2.5-flash-lite",   # גיבוי קל יותר (מכסה נפרדת)
-    "gemini-2.0-flash",
-    # gemini-flash-lite-latest removed: rejects tool-call histories that contain
-    # thought_signatures from other models, causing infinite _RecoverableModelError
-    # restart loops that spin until the gunicorn worker is SIGKILLed.
+    "gpt-5-mini",    # primary
+    "gpt-4o-mini",   # fallback on rate-limit
 ]
 
 
@@ -291,15 +280,24 @@ class ScoutAgent:
                 return m.group(1).strip(" ?.,:;\"'")
         return q
 
-    @staticmethod
-    def _extract_matchup(text: str) -> dict | None:
+    # Words that are intent/meta markers, not part of a team name.
+    _INTENT_WORDS = re.compile(
+        r"\b(prediction|predictions|result|results|match|game|score|preview|analysis|forecast)\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _extract_matchup(cls, text: str) -> dict | None:
         q = text.strip()
+        # Strip leading intent words ("predict:", "who wins", …)
         cleaned = re.sub(
             r"^\s*(predict|who wins|forecast|נבא|תחזה|מי ינצח)\s*:?\s*",
             "",
             q,
             flags=re.IGNORECASE,
         )
+        # Strip trailing intent/meta words ("Brazil vs England prediction" → "Brazil vs England")
+        cleaned = cls._INTENT_WORDS.sub("", cleaned).strip(" ?.,:;\"'")
         parts = re.split(
             r"\s+vs\.?\s+|\s+against\s+|\s+versus\s+|נגד|מול",
             cleaned,
@@ -313,35 +311,87 @@ class ScoutAgent:
             return None
         return {"team1": team1, "team2": team2}
 
-    def _direct_tool_answer(self, user_input: str) -> str | None:
+    # Role synonyms used by the deterministic fallback router.
+    _ROLE_MAP: dict[str, str] = {
+        "left-back": "left_back",   "left back": "left_back",   "lb": "left_back",
+        "lwb": "left_back",         "left wing back": "left_back",
+        "right-back": "right_back", "right back": "right_back", "rb": "right_back",
+        "rwb": "right_back",        "right wing back": "right_back",
+        "wing back": "fullback",    "wing-back": "fullback",    "full back": "fullback",
+        "centre-back": "centre_back", "center-back": "centre_back", "centre back": "centre_back",
+        "center back": "centre_back", "central defender": "centre_back", "cb": "centre_back",
+        "cm": "box_to_box",         "box to box": "box_to_box",
+        "cdm": "defensive_midfielder", "holding mid": "defensive_midfielder",
+        "cam": "creative_attacker",
+        "st": "striker",            "cf": "striker",            "centre forward": "striker",
+        "gk": "goalkeeper",         "keeper": "goalkeeper",
+        "lw": "winger",             "rw": "winger",
+    }
+
+    @classmethod
+    def _extract_role_from_text(cls, text: str) -> str:
+        """Extract a position/role from phrases like 'as a left-back', 'at striker'."""
+        q = text.lower()
+        m = re.search(
+            r"\b(?:as\s+an?\s+|at\s+(?:the\s+)?|playing\s+(?:as\s+)?(?:an?\s+)?)([a-z][\w\s-]{2,20})",
+            q,
+        )
+        if m:
+            candidate = m.group(1).strip()
+            for key, role in cls._ROLE_MAP.items():
+                if key == candidate or candidate.startswith(key):
+                    return role
+        return ""
+
+    @staticmethod
+    def _extract_champion(standings_text: str) -> str | None:
+        """Parse the #1 team name from a formatted standings text block."""
+        past_sep = False
+        for line in standings_text.splitlines():
+            if line.startswith("---") or line.startswith("────"):
+                past_sep = True
+                continue
+            if past_sep:
+                stripped = line.strip()
+                if stripped.startswith("1 ") or stripped.startswith("1\t"):
+                    m = re.match(r"^1\s+(.+?)\s{2,}", stripped)
+                    if m:
+                        return m.group(1).strip()
+        return None
+
+    def _direct_tool_answer(self, user_input: str, history: list = None) -> str | None:
         """Deterministic routing used as a fallback when the LLM is unavailable (quota)."""
         q = user_input.lower()
 
-        # Player profile / archetype — "show me X's profile", "who is X", "tell me about X"
-        # Triggers on archetype keywords OR on profile/about keywords WITHOUT search intent.
+        # Player profile / archetype — only trigger when the query contains "profile",
+        # "archetype", or "tell me about" AND successfully extracts a player name.
+        # "show me" and "who is" are intentionally excluded: they are too broad and fire
+        # for league table requests, goalkeeper questions, etc.
         _profile_triggers = ["archetype", "type of player", "what type", "ארכיטיפ",
-                             "profile", "פרופיל", "tell me about", "who is", "ספר לי על",
-                             "show me", "הראה לי", "מי הוא", "מי היא"]
-        _search_guards    = ["search", "find", "similar", "דומה", "חפש", "best", "top",
-                             "wonderkid", "replacement"]
+                             "profile", "פרופיל", "tell me about", "ספר לי על"]
+        _profile_guards   = ["search", "find", "similar", "דומה", "חפש", "best", "top",
+                             "wonderkid", "replacement", "table", "standings", "טבלה",
+                             "scorer", "who won", "champion"]
         if (any(w in q for w in _profile_triggers)
-                and not any(w in q for w in _search_guards)):
+                and not any(w in q for w in _profile_guards)):
             tool = self.tool_map.get("get_player_archetype")
             if tool:
                 player = self._extract_after_keywords(user_input, [
                     r"archetype\s+(?:of|for)\s+(.+)$",
                     r"profile\s+(?:of|for)\s+(.+)$",
-                    r"show\s+me\s+(.+?)(?:'s)?\s+profile",
+                    r"(.+?)(?:'s)\s+profile",
+                    r"show\s+me\s+(.+?)\s+(?:player\s+)?profile",
                     r"tell\s+me\s+about\s+(.+)$",
-                    r"who\s+is\s+(.+)$",
                     r"type\s+of\s+player\s+is\s+(.+)$",
                     r"what\s+type\s+of\s+player\s+is\s+(.+)$",
                     r"ארכיטיפ\s+של\s+(.+)$",
                     r"פרופיל\s+של\s+(.+)$",
-                    r"הראה\s+לי\s+(?:את\s+)?(.+?)(?:'s)?\s+פרופיל",
                     r"ספר\s+לי\s+על\s+(.+)$",
                 ])
-                return str(tool.invoke(player))
+                # Only call the tool if a specific name was actually extracted,
+                # not if the full raw input was returned unchanged (no pattern matched).
+                if player and player.strip() != user_input.strip():
+                    return str(tool.invoke(player))
 
         if any(w in q for w in ["anomal", "overperform", "underperform", "חריג", "חריגים"]):
             tool = self.tool_map.get("detect_anomalies")
@@ -366,11 +416,36 @@ class ScoutAgent:
                 ])
                 return str(tool.invoke(players))
 
-        if any(w in q for w in ["predict", "who wins", "forecast", "נבא", "תחזה", "מי ינצח"]):
+        _pred_triggers = [
+            "predict", "who wins", "forecast", "נבא", "תחזה", "מי ינצח",
+            "what will be the result", "what will the score be", "result of the match",
+            "score of the match", "who will win", "what score", "result between",
+            "מה יהיה הניצחון", "מה תהיה התוצאה", "מה יהיה הסקור",
+        ]
+        if any(w in q for w in _pred_triggers):
             tool = self.tool_map.get("predict_match")
             matchup = self._extract_matchup(user_input)
             if tool and matchup:
                 return str(tool.invoke(matchup))
+
+        # Club-specific top scorer — must be checked BEFORE the generic scorer path because
+        # "goals for Chelsea" triggers "goals" → shooting in parse_scouting_query, which would
+        # otherwise fall through to search_by_profile.
+        _club_scorer_triggers = [
+            "scored the most", "scored most", "most goals for", "most goals at",
+            "top scorer for", "top scorer at", "top scorer of", "who scored for",
+            "מי הבקיע", "מלך השערים של",
+        ]
+        if any(w in q for w in _club_scorer_triggers):
+            tool = self.tool_map.get("get_club_top_scorer")
+            if tool:
+                club = self._extract_after_keywords(user_input, [
+                    r"(?:most goals|scored most|top scorer)\s+(?:for|at|of)\s+(.+?)(?:\s+(?:last|this|in)\s+season.*)?$",
+                    r"who\s+scored\s+(?:the\s+)?most\s+(?:goals\s+)?(?:for|at)\s+(.+?)(?:\s+(?:last|this|in)\s+season.*)?$",
+                    r"מלך\s+השערים\s+של\s+(.+?)(?:\s+בעונה.*)?$",
+                ])
+                if club and club.strip() != user_input.strip():
+                    return str(tool.invoke(club.strip()))
 
         if any(w in q for w in ["top scorer", "topscorer", "scorers", "golden boot", "מלך השערים"]):
             if any(w in q for w in ["world cup", "wc", "mundial", "מונדיאל", "2026"]):
@@ -386,13 +461,20 @@ class ScoutAgent:
                 ])
                 return str(tool.invoke(competition))
 
-        # Standings / "who won the league / champion" — incl. Hebrew. Only treat champion
-        # wording as a standings lookup when a specific league is detected (so "who wins the
-        # World Cup" isn't misrouted here).
+        # Standings / "who won the league / champion" — incl. Hebrew.
         comp = self._detect_competition(user_input)
+        # If no competition found in current message, search recent history for context
+        # (handles follow-ups like "but who won?" after a table was shown).
+        if not comp and history:
+            for msg in reversed(history[-6:]):
+                content = msg.content if hasattr(msg, "content") else str(msg)
+                comp = self._detect_competition(content)
+                if comp:
+                    break
         champion_words = ["who won", "champion", "winner", "won the", "אליפות", "אלופ", "זכת", "ניצח"]
-        if any(w in q for w in ["standings", "table", "league table", "טבלה"]) or \
-           (comp and any(w in q for w in champion_words)):
+        is_champion_q  = comp and any(w in q for w in champion_words)
+        is_table_q     = any(w in q for w in ["standings", "table", "league table", "טבלה"])
+        if is_table_q or is_champion_q:
             tool = self.tool_map.get("get_live_standings")
             if tool:
                 competition = comp or self._extract_after_keywords(user_input, [
@@ -401,7 +483,14 @@ class ScoutAgent:
                     r"league\s+table\s+(?:for|of|in)?\s*(.+)$",
                     r"טבלה\s+(?:של|ב)?\s*(.+)$",
                 ])
-                return str(tool.invoke(competition))
+                result_text = str(tool.invoke(competition))
+                # For "who won" questions, prepend a direct champion answer extracted from
+                # the first row of the standings rather than making the user scan the table.
+                if is_champion_q and not is_table_q:
+                    champion = self._extract_champion(result_text)
+                    if champion:
+                        return f"**{champion}** won {competition}.\n\n{result_text}"
+                return result_text
 
         if any(w in q for w in ["squad", "roster", "called up", "call-up", "call up", "סגל"]):
             tool = self.tool_map.get("get_national_squad")
@@ -419,14 +508,42 @@ class ScoutAgent:
             if tool:
                 return str(tool.invoke(user_input))
 
+        # Follow-up position filter — "but only attackers", "only strikers", "just goalkeepers"
+        # Re-runs the last scouting query from history with the added position constraint.
+        _filter_re = re.search(
+            r"\b(?:only|just|but only|show|filter|רק|בלבד)\b.{0,25}"
+            r"\b(attacker|striker|forward|winger|midfielder|defender|goalkeeper|"
+            r"חלוץ|חלוצים|קיצוני|קשר|בלם|שוער|left.back|right.back)\b",
+            q, re.IGNORECASE,
+        )
+        if _filter_re and history:
+            role_from_filter = self._ROLE_MAP.get(_filter_re.group(1).lower()) or _filter_re.group(1).lower()
+            for msg in reversed(history[-6:]):
+                content = msg.content if hasattr(msg, "content") else str(msg)
+                prev_ctx = parse_scouting_query(content)
+                if prev_ctx["intent"] == "wonderkid" or "wonderkid" in content.lower() or "cheap" in content.lower():
+                    cheap = any(w in content.lower() for w in ["cheap", "affordable", "budget", "זול"])
+                    tool = self.tool_map.get("find_wonderkids")
+                    if tool:
+                        return str(tool.invoke({
+                            "role": role_from_filter,
+                            "max_age": prev_ctx.get("age_max") or 21,
+                            "min_potential": prev_ctx.get("potential_min") or 80,
+                            "max_overall": 70 if cheap else 0,
+                        }))
+                    break
+
         # Scouting: parse intent + entities and route to the matching scouting tool.
         ctx = parse_scouting_query(user_input)
         ref = ctx.get("reference_player")
+        lim = ctx.get("limit", 5)
         if ctx["intent"] == "replacement" and ref:
             tool = self.tool_map.get("find_replacement")
             if tool:
+                role_override = self._extract_role_from_text(user_input)
                 return str(tool.invoke({"player_name": ref, "club": ctx.get("club", ""),
-                                        "max_age": ctx.get("age_max", 0)}))
+                                        "max_age": ctx.get("age_max", 0),
+                                        "role": role_override}))
         if ctx["intent"] == "similar" and ref:
             tool = self.tool_map.get("find_similar_player")
             if tool:
@@ -434,16 +551,21 @@ class ScoutAgent:
         if ctx["intent"] == "wonderkid":
             tool = self.tool_map.get("find_wonderkids")
             if tool:
+                cheap = any(w in q for w in ["cheap", "affordable", "budget", "low cost",
+                                             "value", "hidden gem", "unknown", "זול", "זולים"])
                 return str(tool.invoke({"role": ctx["role"], "max_age": ctx["age_max"] or 21,
                                         "min_potential": ctx["potential_min"] or 80,
-                                        "important_features": ",".join(ctx["important_features"])}))
+                                        "important_features": ",".join(ctx["important_features"]),
+                                        "max_overall": 70 if cheap else 0,
+                                        "limit": lim}))
         if self._looks_like_scout_query(user_input) or ctx["role"] or ctx["important_features"]:
             tool = self.tool_map.get("search_by_profile")
             if tool:
                 return str(tool.invoke({"role": ctx["role"], "max_age": ctx["age_max"],
                                         "min_potential": ctx["potential_min"],
                                         "important_features": ",".join(ctx["important_features"]),
-                                        "description": user_input}))
+                                        "description": user_input,
+                                        "limit": lim}))
 
         return None
 
@@ -478,21 +600,15 @@ class ScoutAgent:
             except Exception as e:
                 last_err = e
                 msg = str(e)
-                # Quota (429) OR transient unavailability (503/500/overloaded) → rotate to
-                # the next model instead of failing the whole request.
                 low = msg.lower()
-                if ("429" in msg or "RESOURCE_EXHAUSTED" in msg or "503" in msg or "500" in msg
-                        or "unavailable" in low or "overloaded" in low or "high demand" in low):
-                    print(f"[agent] Model {MODEL_CHAIN[idx]} unavailable/quota ({msg[:50]}); rotating.", flush=True)
+                # OpenAI rate-limit (429 / RateLimitError) or transient server errors
+                # (502/503/500 / ServiceUnavailableError) → rotate to next model.
+                if ("429" in msg or "rate_limit" in low or "rate limit" in low
+                        or "503" in msg or "502" in msg or "500" in msg
+                        or "unavailable" in low or "overloaded" in low
+                        or "high demand" in low or "insufficient_quota" in low):
+                    print(f"[agent] Model {MODEL_CHAIN[idx]} unavailable/quota ({msg[:60]}); rotating.", flush=True)
                     continue
-                # Non-quota rejection (e.g. Gemini 2.5 cross-model thought_signature mismatch
-                # when a tool call from one model is replayed to another). Don't keep feeding
-                # the poisoned history to more models — advance and let invoke() restart clean.
-                if "thought_signature" in msg or "INVALID_ARGUMENT" in msg:
-                    print(f"[agent] Model {MODEL_CHAIN[idx]} rejected history "
-                          f"({msg[:70]}...); restarting turn with next model.", flush=True)
-                    self.model_idx = (idx + 1) % len(self.llms)
-                    raise _RecoverableModelError(msg) from e
                 raise
         raise _QuotaExhausted(str(last_err))
 
@@ -515,7 +631,7 @@ class ScoutAgent:
             if not getattr(response, "tool_calls", None):
                 answer = self._extract_text(response.content) or "No response."
                 if answer.strip() in {"No response.", "No response"}:
-                    fallback = self._direct_tool_answer(user_input)
+                    fallback = self._direct_tool_answer(user_input, history=None)
                     if fallback:
                         answer = fallback
                 return answer
@@ -601,16 +717,15 @@ class ScoutAgent:
             break  # iteration cap reached — drop to the deterministic fallback
 
         # No clean LLM answer — fall back to the deterministic router.
-        fallback = self._direct_tool_answer(user_input)
+        fallback = self._direct_tool_answer(user_input, history=self._get_history(session_id))
         if fallback:
             clean, viz = split_viz(fallback)
             self._remember(session_id, user_input, clean)
             return clean, viz
         if quota_hit:
-            return ("FOOTBOT has reached today's free Gemini quota and this question "
-                    "needs the language model. The quota resets daily — please try "
-                    "again later, or ask directly for similar players, a scouting "
-                    "list, a prediction, standings, or top scorers.", None)
+            return ("FOOTBOT's AI is temporarily unavailable (rate limit or quota reached). "
+                    "Please try again in a moment, or ask directly for similar players, "
+                    "a scouting list, a prediction, standings, or top scorers.", None)
         return "I couldn't complete that — try asking a more focused question.", None
 
 
@@ -675,29 +790,29 @@ def build_agent(engine, national_strength, schedule):
         make_get_national_squad_tool(wc_squads),
         make_get_live_standings_tool(),
         make_get_top_scorers_tool(),
+        make_get_club_top_scorer_tool(engine),
         make_world_cup_tool(schedule),
     ]
 
-    # Build one tool-bound LLM per configured model for quota rotation.
-    api_key = os.getenv("GEMINI_API_KEY")
+    # Build one tool-bound LLM per configured model for rate-limit rotation.
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not configured. Add it to .env or the hosting environment.")
+        raise RuntimeError("OPENAI_API_KEY is not configured. Add it to .env or the hosting environment.")
 
     llms_with_tools = []
     for model_name in MODEL_CHAIN:
-        kwargs = dict(
-            model=model_name,
-            google_api_key=api_key,
-            temperature=0.3,
-            max_retries=0,
-        )
-        # Disable "thinking" on Gemini 2.5+ flash models. Thinking adds per-call
-        # thought_signatures that must be echoed back — which breaks when we rotate
-        # models mid tool-call on quota. Turning it off also makes replies faster and
-        # cheaper. (gemini-2.0-flash isn't a thinking model, so skip it there.)
-        if "2.0" not in model_name:
-            kwargs["thinking_budget"] = 0
-        llm = ChatGoogleGenerativeAI(**kwargs)
+        kwargs = dict(model=model_name, api_key=api_key, max_retries=0)
+        # GPT-5 / o-series are reasoning models: by default they "think" before every
+        # reply, which made narration calls take 12-16s. The bot's job (tool routing +
+        # summarising a tool result in the user's language) needs almost no reasoning,
+        # so force minimal effort — this cut total latency ~15s → ~4s in benchmarks.
+        # Reasoning models also only accept the default temperature (1), so don't set it.
+        is_reasoning = model_name.startswith(("gpt-5", "o1", "o3", "o4"))
+        if is_reasoning:
+            kwargs["reasoning_effort"] = "minimal"
+        else:
+            kwargs["temperature"] = 0.3
+        llm = ChatOpenAI(**kwargs)
         llms_with_tools.append(llm.bind_tools(tools))
 
     agent = ScoutAgent(llms_with_tools=llms_with_tools, tools=tools)
