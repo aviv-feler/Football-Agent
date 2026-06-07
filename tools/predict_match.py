@@ -32,7 +32,7 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame, c
         )
         winner = order[0][0]
         return (
-            f"**Match prediction: {res['home']} (home) vs {res['away']}**\n\n"
+            f"**Prediction: {res['home']} (home) vs {res['away']}**\n\n"
             f"Likely result: **{winner}** "
             f"(probabilities: {res['home']} {round(res['p_home']*100)}% | "
             f"draw {round(res['p_draw']*100)}% | {res['away']} {round(res['p_away']*100)}%)\n\n"
@@ -67,7 +67,7 @@ def make_predict_match_tool(df: pd.DataFrame, national_strength: pd.DataFrame, c
             return "no World Cup history (squad strength only)"
 
         return (
-            f"**World Cup 2026 prediction: {team1} vs {team2}**\n\n"
+            f"**Prediction: World Cup 2026 — {team1} vs {team2}**\n\n"
             f"Likely result: **{winner}** "
             f"(probabilities: {team1} {round(p1*100)}% | draw {round(p_draw*100)}% | {team2} {round(p2*100)}%)\n\n"
             f"**Hybrid national-team strength (current squad value + World Cup pedigree):**\n"

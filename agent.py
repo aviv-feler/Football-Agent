@@ -30,6 +30,7 @@ from tools.get_national_squad import make_get_national_squad_tool
 from tools.get_live_standings import make_get_live_standings_tool
 from tools.get_top_scorers import make_get_top_scorers_tool
 from tools.get_club_top_scorer import make_get_club_top_scorer_tool
+from tools.get_recent_matches import make_get_recent_matches_tool, lookup_team_matches
 from tools.world_cup import make_world_cup_tool
 from club_model import ClubModel
 from prediction_engine import PredictionEngine, parse_prediction_query
@@ -57,6 +58,10 @@ HOW TO THINK:
    NEVER answer these from your own training memory: it is outdated and will be wrong.
    This rule is the same in EVERY language (Hebrew included). If unsure which tool, pick the
    closest one and call it — do not guess from memory.
+   Historical results, head-to-head, latest match, scores, scorers, transfers and injuries
+   are factual. If no verified tool/source is available, clearly say the verified data is
+   unavailable. NEVER invent a historical scoreline, scorer, date, table position, transfer,
+   injury, or statistic.
 3. NORMALIZE ENTITIES TO CANONICAL ENGLISH before every tool call, whatever language the
    user wrote in — tools only understand English names:
    • "הליגה האנגלית" / "פריימר ליג" / "ליגה אנגלית" / "אליפות אנגליה" → "Premier League"
@@ -88,6 +93,11 @@ TONE & LENGTH:
   ranks) — the card already shows them. Repeating them makes the reply slow and cluttered.
 - For everything else, keep it tight; use short bullets only when they genuinely help.
 - Never say "I cannot answer" — if it's factual, call the right tool instead.
+- FOOTBOT is football-only. Politely refuse off-domain requests (weather, politics unrelated
+  to football, general homework, general knowledge) and redirect to football. Allow football
+  creative writing such as poems, chants, jokes, stories, and posts.
+- Clearly label model estimates as "Prediction:" in English or "תחזית:" in Hebrew. Never
+  present a prediction as a historical fact.
 - NEVER narrate your process, announce intentions, or ask permission. Do NOT write
   "I will…", "Let me…", "Proceeding…", "אשתמש…", "אבדוק…", "(performing a lookup…)",
   "(מבצע קריאה לנתוני הטבלה...)", "I ran the model", and do NOT end by asking
@@ -122,6 +132,7 @@ SQUADS & LIVE DATA:
 - get_live_standings(competition)     → LIVE league table. Use for "show me the [league] table", "Serie A standings", "who won the league".
 - get_top_scorers(competition)        → LIVE current-season league scorers (football-data.org)
 - get_club_top_scorer(club)           → top scorers for a SPECIFIC CLUB from the player dataset. Use for "who scored most for Chelsea?", "[club]'s top scorer last season".
+- get_recent_matches(team, opponent, limit) → VERIFIED finished club matches from football-data.org. Use for recent head-to-head, latest match, historical scoreline, "last N results between X and Y". If scorers are unavailable, say so; never guess.
 - world_cup_info(query)               → WC 2026 schedule and fixtures
 
 TOOL STRATEGY:
@@ -131,6 +142,9 @@ TOOL STRATEGY:
 - "[PLAYER]'s profile / tell me about [PLAYER] / [PLAYER]'s stats" → get_player_archetype([PLAYER]). Only when a named real player is mentioned.
 - "who scored the most goals for [CLUB]? / [CLUB]'s top scorer / who scored for [CLUB] last season?" → get_club_top_scorer([CLUB]). This is NEVER a profile search — do not use search_by_profile for club scorer questions.
 - "top scorers in [league] / golden boot" → get_top_scorers([league]).
+- "last N results between [TEAM] and [TEAM]" / "latest match for [TEAM]" → get_recent_matches.
+- Follow-up "who scored?" after a historical result → only answer if a verified scorer source
+  is present in tool output; otherwise state that verified scorer data is unavailable.
 - "who is the best [position]? / best goalkeeper / top striker" → search_by_profile(role=..., important_features="overall,potential"). Always answer with data — never refuse.
 - "cheap/affordable/budget wonderkids" → find_wonderkids(max_overall=70).
 - "World Cup opening match / first match / משחק הפתיחה של המונדיאל" → predict_wc_match("Mexico", "South Africa") — the WC 2026 opener (match #1, Mexico City). Always predict it; NEVER ask which match.
@@ -142,7 +156,7 @@ TOOL STRATEGY:
 - SELF-CHECK: Before responding, confirm your answer matches the intent. League table → standings data. Left-back replacement → fullbacks/left-backs in results. Club top scorer → players from that club.
 
 DATA SOURCES & ATTRIBUTION (be honest — never claim a source you didn't use):
-- football-data.org is used ONLY by get_live_standings and get_top_scorers. NEVER cite
+- football-data.org is used ONLY by get_live_standings, get_top_scorers, and get_recent_matches. NEVER cite
   football-data.org as the source for a player's club, transfer, or squad — it was not queried.
 - A player's club in the scouting/analysis data is a snapshot and can be outdated. For a WC
   national-team player's CURRENT club, use get_national_squad (official 2026 squad clubs).
@@ -174,13 +188,19 @@ def load_resources():
     return engine, national_strength, schedule
 
 
-# OpenAI model chain. The PRIMARY model is read from the OPENAI_MODEL env var so it can
-# be changed without editing code (e.g. OPENAI_MODEL=gpt-5-mini, or gpt-5.4-mini for the
-# newer small model); it falls back to a sensible default when unset. gpt-4o-mini is
-# appended as a cheap, always-valid fallback used automatically if the primary hits a
-# rate limit or is unavailable/unknown on the account (see _call_llm).
-_PRIMARY_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-5-mini").strip()
-MODEL_CHAIN = [_PRIMARY_MODEL] + (["gpt-4o-mini"] if _PRIMARY_MODEL != "gpt-4o-mini" else [])
+# OpenAI model chain. Presentation correctness is the priority: use the strongest
+# configured reasoning model by default. A fallback is allowed only when explicitly
+# configured in the environment; we do not silently downgrade reasoning to a mini model.
+_PRIMARY_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-5.5").strip()
+_FALLBACK_MODELS = [
+    m.strip()
+    for m in (os.getenv("OPENAI_FALLBACK_MODEL") or "gpt-5-mini,gpt-4o-mini").split(",")
+    if m.strip()
+]
+MODEL_CHAIN = []
+for _model in [_PRIMARY_MODEL, *_FALLBACK_MODELS]:
+    if _model and _model not in MODEL_CHAIN:
+        MODEL_CHAIN.append(_model)
 
 # Cached demo answers return in microseconds, which looks suspicious next to live answers
 # (~3-5s). Add a small jittered pause to cache hits so they feel natural. Seconds; set
@@ -216,6 +236,15 @@ DEMO_QUERIES = [
     # 8 — overperformer (Z-score anomaly)
     "מצא שחקן שמבצע מעל הממוצע של הקבוצה שלו",
     "Find a player overperforming",
+    # Guardrail demo questions: historical H2H, Hebrew comparison, off-domain, creative.
+    "מה היו 2 התוצאות האחרונות בין ארסנל למנצ'סטר סיטי?",
+    "תשווה בין מסי לרונאלדו",
+    "מה ההבדל בין ויניסיוס לאמבפה?",
+    "מסי לעומת רונאלדו",
+    "מה מזג האוויר בתל אביב?",
+    "תכתוב לי שיר על מסי",
+    "תן לי תחזית למשחק הבא של ברצלונה",
+    "מה הייתה התוצאה במשחק האחרון של ברצלונה?",
 ]
 
 
@@ -224,9 +253,33 @@ class _QuotaExhausted(Exception):
 
 
 class _RecoverableModelError(Exception):
-    """Raised when a model rejects the request for a non-quota reason (e.g. a
-    cross-model Gemini 2.5 thought_signature mismatch). The turn is retried from
-    a clean message history with the next model."""
+    """Raised when an OpenAI model rejects the request for a non-quota reason.
+    The turn is retried from a clean message history with the next configured model."""
+
+
+class LazyPredictionEngine:
+    """Delay the heaviest prediction training until a matching tool is actually used."""
+
+    def __init__(self):
+        self._engine = None
+        self._lock = threading.Lock()
+
+    def _get(self):
+        if self._engine is None:
+            with self._lock:
+                if self._engine is None:
+                    print("[prediction] Lazy-loading PredictionEngine...", flush=True)
+                    self._engine = PredictionEngine()
+        return self._engine
+
+    def predict_club_match(self, *args, **kwargs):
+        return self._get().predict_club_match(*args, **kwargs)
+
+    def predict_top_scorer(self, *args, **kwargs):
+        return self._get().predict_top_scorer(*args, **kwargs)
+
+    def predict_player_goals(self, *args, **kwargs):
+        return self._get().predict_player_goals(*args, **kwargs)
 
 
 class ScoutAgent:
@@ -247,6 +300,9 @@ class ScoutAgent:
         # Pre-computed demo answers keyed by normalized query (populated by warmup()).
         # A hit returns instantly with NO LLM/API call — used for the live presentation.
         self.response_cache: dict[str, tuple[str, dict | None]] = {}
+        # Lightweight per-session factual context for follow-ups like "who scored?"
+        # after a recent H2H/latest-match lookup.
+        self.last_match_context: dict[str, dict] = {}
         self._lock = threading.RLock()
 
     def _get_history(self, session_id: str) -> list:
@@ -268,8 +324,10 @@ class ScoutAgent:
         with self._lock:
             if session_id:
                 self.histories.pop(session_id, None)
+                self.last_match_context.pop(session_id, None)
             else:
                 self.histories = {}
+                self.last_match_context = {}
         if self.qa_pipeline is not None:
             self.qa_pipeline.reset_context()
 
@@ -324,6 +382,276 @@ class ScoutAgent:
             if any(a in q for a in aliases):
                 return canon
         return ""
+
+    _FOOTBALL_TERMS = [
+        "football", "soccer", "player", "club", "team", "match", "league", "goal",
+        "world cup", "messi", "ronaldo", "mbappe", "vinicius", "barcelona", "arsenal",
+        "כדורגל", "שחקן", "קבוצה", "משחק", "ליגה", "שער", "מונדיאל", "מסי",
+        "רונאלדו", "אמבפה", "ויניסיוס", "ברצלונה", "ארסנל",
+    ]
+    _OFF_DOMAIN_TERMS = [
+        "weather", "forecast weather", "temperature", "capital of", "math homework",
+        "politics", "stock price", "מזג", "מזג האוויר", "טמפרטורה", "בירת",
+        "שיעורי בית", "פוליטיקה", "מניה",
+    ]
+    _PLAYER_ALIASES = {
+        "מסי": "Lionel Messi",
+        "למסי": "Lionel Messi",
+        "messi": "Lionel Messi",
+        "רונאלדו": "Cristiano Ronaldo",
+        "לרונאלדו": "Cristiano Ronaldo",
+        "ronaldo": "Cristiano Ronaldo",
+        "אמבפה": "Kylian Mbappé",
+        "לאמבפה": "Kylian Mbappé",
+        "מבאפה": "Kylian Mbappé",
+        "mbappe": "Kylian Mbappé",
+        "ויניסיוס": "Vinicius Junior",
+        "לויניסיוס": "Vinicius Junior",
+        "vinicius": "Vinicius Junior",
+    }
+    _TEAM_ALIASES = {
+        "ארסנל": "Arsenal",
+        "מנצ'סטר סיטי": "Manchester City",
+        "מנצסטר סיטי": "Manchester City",
+        "סיטי": "Manchester City",
+        "ברצלונה": "Barcelona",
+        "בארסה": "Barcelona",
+        "ריאל מדריד": "Real Madrid",
+        "צ'לסי": "Chelsea",
+        "צלסי": "Chelsea",
+        "ליברפול": "Liverpool",
+    }
+
+    @classmethod
+    def _canon_player_text(cls, value: str) -> str:
+        raw = value.strip(" ?.,:;\"'()[]")
+        low = raw.lower()
+        if low in cls._PLAYER_ALIASES:
+            return cls._PLAYER_ALIASES[low]
+        if raw in cls._PLAYER_ALIASES:
+            return cls._PLAYER_ALIASES[raw]
+        if raw.startswith("ל") and raw[1:] in cls._PLAYER_ALIASES:
+            return cls._PLAYER_ALIASES[raw[1:]]
+        return raw
+
+    @classmethod
+    def _canon_team_text(cls, value: str) -> str:
+        raw = value.strip(" ?.,:;\"'()[]")
+        low = raw.lower()
+        if low in cls._TEAM_ALIASES:
+            return cls._TEAM_ALIASES[low]
+        if raw in cls._TEAM_ALIASES:
+            return cls._TEAM_ALIASES[raw]
+        if raw.startswith("ל") and raw[1:] in cls._TEAM_ALIASES:
+            return cls._TEAM_ALIASES[raw[1:]]
+        return raw
+
+    @classmethod
+    def _off_domain_refusal(cls, text: str, lang: str) -> str | None:
+        q = text.lower()
+        has_off = any(term in q or term in text for term in cls._OFF_DOMAIN_TERMS)
+        has_ball = any(term in q or term in text for term in cls._FOOTBALL_TERMS)
+        if not has_off or has_ball:
+            return None
+        if lang == "Hebrew":
+            return (
+                "אני מתמקד בכדורגל, אז אני לא יכול לעזור עם בקשות מחוץ לתחום כמו מזג אוויר. "
+                "אפשר לשאול אותי על משחקים, שחקנים, קבוצות, תחזיות, טבלאות או סטטיסטיקות כדורגל."
+            )
+        return (
+            "I'm focused on football, so I can't help with that off-domain request. "
+            "Ask me about matches, players, clubs, predictions, standings, or football stats."
+        )
+
+    @classmethod
+    def _extract_compare_request(cls, text: str) -> str | None:
+        q = text.strip()
+        patterns = [
+            r"(?:compare)\s+(.+?)\s+(?:and|vs\.?|versus)\s+(.+)$",
+            r"(?:תשווה|השווה|תעשה השוואה)\s+בין\s+(.+?)\s+(?:ל-|ל|ו-|ו)\s*(.+)$",
+            r"מה\s+ההבדל\s+בין\s+(.+?)\s+(?:ל-|ל|ו-|ו)\s*(.+?)(?:\?|$)",
+            r"(.+?)\s+לעומת\s+(.+?)(?:\?|$)",
+            r"מי\s+יותר\s+טוב\s+(.+?)\s+או\s+(.+?)(?:\?|$)",
+        ]
+        for pat in patterns:
+            m = re.search(pat, q, flags=re.IGNORECASE)
+            if m:
+                a = cls._canon_player_text(m.group(1))
+                b = cls._canon_player_text(m.group(2))
+                if a and b:
+                    return f"{a} vs {b}"
+        return None
+
+    @classmethod
+    def _extract_recent_match_request(cls, text: str) -> dict | None:
+        q = text.strip()
+        low = q.lower()
+        limit = 2
+        n = re.search(r"\b([1-9]|10)\b", low)
+        if n:
+            limit = int(n.group(1))
+
+        # Hebrew / English H2H: "last 2 results between Arsenal and Man City".
+        h2h_intent = any(x in low or x in q for x in [
+            "head-to-head", "h2h", "last results", "recent results", "results between",
+            "תוצאות", "ראש בראש", "ביניהן", "ביניהם",
+        ])
+        if h2h_intent:
+            patterns = [
+                r"between\s+(.+?)\s+and\s+(.+?)(?:\?|$)",
+                r"(.+?)\s+vs\.?\s+(.+?)(?:\?|$)",
+                r"בין\s+(.+?)\s+ל(.+?)(?:\?|$)",
+                r"בין\s+(.+?)\s+לבין\s+(.+?)(?:\?|$)",
+            ]
+            for pat in patterns:
+                m = re.search(pat, q, flags=re.IGNORECASE)
+                if m:
+                    a = cls._canon_team_text(m.group(1))
+                    b = cls._canon_team_text(m.group(2))
+                    # Remove common trailing words accidentally captured with the team.
+                    b = re.sub(r"\s+(האחרונות|האחרונה|last|recent|results?)$", "", b, flags=re.IGNORECASE).strip()
+                    if a and b:
+                        return {"team": a, "opponent": b, "limit": limit, "kind": "h2h"}
+
+        latest_intent = any(x in low or x in q for x in [
+            "last match", "latest match", "recent match", "המשחק האחרון", "משחק אחרון",
+            "התוצאה במשחק האחרון",
+        ])
+        if latest_intent and "הבא" not in q and "next" not in low:
+            patterns = [
+                r"(?:last|latest|recent)\s+match\s+(?:of|for)\s+(.+?)(?:\?|$)",
+                r"(?:what\s+was\s+)?(.+?)\s+(?:last|latest|recent)\s+match(?:\?|$)",
+                r"המשחק\s+האחרון\s+של\s+(.+?)(?:\?|$)",
+                r"התוצאה\s+במשחק\s+האחרון\s+של\s+(.+?)(?:\?|$)",
+            ]
+            for pat in patterns:
+                m = re.search(pat, q, flags=re.IGNORECASE)
+                if m:
+                    team = cls._canon_team_text(m.group(1))
+                    if team:
+                        return {"team": team, "opponent": "", "limit": 1, "kind": "latest"}
+        return None
+
+    @classmethod
+    def _extract_next_match_prediction(cls, text: str) -> str | None:
+        q = text.strip()
+        low = q.lower()
+        if not (("next match" in low or "upcoming match" in low or "המשחק הבא" in q or "משחק הבא" in q)
+                and ("prediction" in low or "predict" in low or "תחזית" in q)):
+            return None
+        patterns = [
+            r"(?:next|upcoming)\s+match\s+(?:of|for)\s+(.+?)(?:\?|$)",
+            r"(?:prediction|predict|forecast)\s+(?:for|of)?\s+(.+?)\s+(?:next|upcoming)\s+match(?:\?|$)",
+            r"המשחק\s+הבא\s+של\s+(.+?)(?:\?|$)",
+            r"תחזית\s+למשחק\s+הבא\s+של\s+(.+?)(?:\?|$)",
+        ]
+        for pat in patterns:
+            m = re.search(pat, q, flags=re.IGNORECASE)
+            if m:
+                return cls._canon_team_text(m.group(1))
+        return None
+
+    @staticmethod
+    def _is_scorer_followup(text: str) -> bool:
+        q = text.lower()
+        return any(x in q or x in text for x in ["who scored", "scorers", "goalscorers", "מי הבקיע", "מי כבש", "הכובשים"])
+
+    def _preflight_direct_answer(self, user_input: str, history: list, session_id: str, lang: str) -> str | None:
+        """High-confidence guardrail routing before the LLM.
+
+        This keeps the demo fast and prevents the riskiest failure mode: the LLM
+        fabricating historical scores/scorers or answering off-domain questions.
+        """
+        q = user_input.strip().lower()
+        if q in {"hi", "hello", "hey", "היי", "הי", "שלום"}:
+            if lang == "Hebrew":
+                return "היי! אני מוכן. שאל אותי על שחקנים, קבוצות, תחזיות, טבלאות או סקאוטינג."
+            return "Hi! I'm ready. Ask me about players, teams, predictions, standings, or scouting."
+
+        refusal = self._off_domain_refusal(user_input, lang)
+        if refusal:
+            return refusal
+
+        if self._is_scorer_followup(user_input):
+            ctx = self.last_match_context.get(session_id)
+            if ctx:
+                if lang == "Hebrew":
+                    return (
+                        f"יש לי את תוצאת המשחק המאומתת עבור {ctx.get('label', 'המשחק הזה')}, "
+                        "אבל אין לי מקור מאומת לכובשים. לכן אני לא אנחש מי הבקיע.\n\n"
+                        "🔍 Method: Verified historical match lookup via football-data.org API."
+                    )
+                return (
+                    f"I have the verified scoreline for {ctx.get('label', 'that match')}, "
+                    "but I do not have a verified scorer source, so I won't guess the goal scorers.\n\n"
+                    "🔍 Method: Verified historical match lookup via football-data.org API."
+                )
+            return (
+                "לאיזה משחק אתה מתכוון, המשחק האחרון או המשחק שלפניו?"
+                if lang == "Hebrew"
+                else "Which match do you mean, the latest one or the one before it?"
+            )
+
+        next_team = self._extract_next_match_prediction(user_input)
+        if next_team:
+            fixture_text, matches = lookup_team_matches(next_team, limit=1, status="SCHEDULED")
+            if matches:
+                home = matches[0].get("homeTeam", {}).get("name") or next_team
+                away = matches[0].get("awayTeam", {}).get("name") or ""
+                pred_tool = self.tool_map.get("predict_club_match_score")
+                if pred_tool and away:
+                    pred = str(pred_tool.invoke({
+                        "home_team": home,
+                        "away_team": away,
+                        "user_context": user_input,
+                    }))
+                    return ("תחזית:\n" if lang == "Hebrew" else "Prediction:\n") + pred
+            if lang == "Hebrew":
+                return (
+                    "תחזית: אין לי כרגע יריבה מאומתת למשחק הבא של הקבוצה הזו, ולכן לא אריץ "
+                    "מודל תחזית בלי fixture מאומת.\n\n"
+                    f"{fixture_text}"
+                )
+            return (
+                "Prediction: I don't currently have a verified next opponent for that team, "
+                "so I won't run a prediction without a verified fixture.\n\n"
+                f"{fixture_text}"
+            )
+
+        recent = self._extract_recent_match_request(user_input)
+        if recent:
+            tool = self.tool_map.get("get_recent_matches")
+            if tool:
+                result = str(tool.invoke({
+                    "team": recent["team"],
+                    "opponent": recent.get("opponent", ""),
+                    "limit": recent.get("limit", 2),
+                }))
+                label = (
+                    f"{recent['team']} vs {recent['opponent']}"
+                    if recent.get("opponent") else recent["team"]
+                )
+                self.last_match_context[session_id] = {"label": label, **recent}
+                return result
+
+        q = user_input.lower()
+        wc_winner = (
+            ("world cup" in q and any(x in q for x in ["who will win", "winner", "favourite", "favorite"]))
+            or ("מונדיאל" in user_input and any(x in user_input for x in ["מי תזכה", "מי יזכה", "מי תיקח", "מי פייבוריט"]))
+        )
+        if wc_winner:
+            tool = self.tool_map.get("predict_wc_winner")
+            if tool:
+                result = str(tool.invoke({}))
+                return ("תחזית:\n" if lang == "Hebrew" else "Prediction:\n") + result
+
+        compare = self._extract_compare_request(user_input)
+        if compare:
+            tool = self.tool_map.get("compare_players_jaccard")
+            if tool:
+                return str(tool.invoke(compare))
+
+        return None
 
     @staticmethod
     def _extract_after_keywords(text: str, patterns: list[str]) -> str:
@@ -669,8 +997,10 @@ class ScoutAgent:
                         or "unavailable" in low or "overloaded" in low
                         or "high demand" in low or "insufficient_quota" in low
                         or "404" in msg or "model_not_found" in low
+                        or "unsupported value" in low or "unsupported_value" in low
+                        or "reasoning_effort" in low
                         or "does not exist" in low or "do not have access" in low):
-                    print(f"[agent] Model {MODEL_CHAIN[idx]} unavailable/quota/unknown ({msg[:60]}); rotating.", flush=True)
+                    print(f"[agent] Model {MODEL_CHAIN[idx]} unavailable/quota/unsupported ({msg[:80]}); rotating.", flush=True)
                     continue
                 raise
         raise _QuotaExhausted(str(last_err))
@@ -805,11 +1135,9 @@ class ScoutAgent:
         return report
 
     def _compute(self, user_input: str, session_id: str = "default") -> tuple[str, dict | None]:
-        # Gemini-first: the model reasons over the conversation and decides which tools to
-        # call (including the live football-data.org API tools), then writes a smart answer
-        # in the user's language. The deterministic keyword router (_direct_tool_answer) is
-        # kept only as a fallback for when the LLM is unavailable (e.g. quota exhausted), so
-        # the agent still responds with real model output instead of an error.
+        # OpenAI-first for broad language understanding, with deterministic fast paths for
+        # high-confidence demo/tool routes. The keyword router is also kept as a fallback
+        # when the LLM is unavailable, so factual football requests can still answer.
         # Returns (answer_text, viz_payload_or_None); viz drives an in-chat visual card.
         lang = self._detect_language(user_input)
         directive = (
@@ -839,6 +1167,18 @@ class ScoutAgent:
         lang_directive = SystemMessage(content=directive)
         # History is prepended before the current turn to preserve context across requests.
         history = self._get_history(session_id)
+        preflight = self._preflight_direct_answer(user_input, history, session_id, lang)
+        if preflight:
+            clean, viz = split_viz(preflight)
+            self._remember(session_id, user_input, clean)
+            return clean, viz
+        direct = self._direct_tool_answer(user_input, history=history)
+        if direct and any(term in user_input.lower() for term in [
+            "similar", "plays like", "replacement", "wonderkid", "scout", "find player", "find players",
+        ]):
+            clean, viz = split_viz(direct)
+            self._remember(session_id, user_input, clean)
+            return clean, viz
         base = [self.system_msg, *history, lang_directive, HumanMessage(content=user_input)]
 
         quota_hit = False
@@ -903,7 +1243,7 @@ def build_agent(engine, national_strength, schedule):
     else:
         print("[agent] Club model unavailable (data/club_matches.csv missing).", flush=True)
 
-    pred_engine = PredictionEngine()
+    pred_engine = LazyPredictionEngine()
     wc_pred = WCPredictor(schedule, national_strength)
     # Official 2026 squad lists → used to restrict top-scorer candidates to called-up players.
     if os.path.exists(WC_SQUADS_CSV):
@@ -946,6 +1286,7 @@ def build_agent(engine, national_strength, schedule):
         make_get_live_standings_tool(),
         make_get_top_scorers_tool(),
         make_get_club_top_scorer_tool(engine),
+        make_get_recent_matches_tool(),
         make_world_cup_tool(schedule),
     ]
 
@@ -960,11 +1301,16 @@ def build_agent(engine, national_strength, schedule):
         # GPT-5 / o-series are reasoning models: by default they "think" before every
         # reply, which made narration calls take 12-16s. The bot's job (tool routing +
         # summarising a tool result in the user's language) needs almost no reasoning,
-        # so force minimal effort — this cut total latency ~15s → ~4s in benchmarks.
+        # so keep the effort low — this cut total latency ~15s → ~4-6s in benchmarks.
+        # NOTE: 'minimal' is the fastest effort but only SOME GPT-5 variants accept it
+        # (e.g. gpt-5-mini / gpt-5-nano). Newer models such as gpt-5.5 REJECT 'minimal'
+        # with a 400 and require one of none/low/medium/high/xhigh. 'low' is the only
+        # value accepted across the whole GPT-5 family, so it is the safe default here;
+        # override per-deploy with OPENAI_REASONING_EFFORT if a model needs something else.
         # Reasoning models also only accept the default temperature (1), so don't set it.
         is_reasoning = model_name.startswith(("gpt-5", "o1", "o3", "o4"))
         if is_reasoning:
-            kwargs["reasoning_effort"] = "minimal"
+            kwargs["reasoning_effort"] = (os.getenv("OPENAI_REASONING_EFFORT") or "low").strip()
         else:
             kwargs["temperature"] = 0.3
         llm = ChatOpenAI(**kwargs)

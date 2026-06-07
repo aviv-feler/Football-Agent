@@ -654,7 +654,7 @@ def _fmt_match(p: dict) -> str:
 
 
 def _fmt_top_scorer(p: dict) -> str:
-    lines = [f"**Projected top scorers — {p.get('scope', 'top-5 leagues')} (next season):**\n"]
+    lines = [f"**Prediction: Projected top scorers — {p.get('scope', 'top-5 leagues')} (next season):**\n"]
     for i, c in enumerate(p["candidates"], 1):
         lines.append(
             f"{i}. **{c['player_name']}** ({c['club']} | {c['position']} | age {c['age']}) "
@@ -677,7 +677,7 @@ def _fmt_top_scorer(p: dict) -> str:
 def _fmt_player_goals(p: dict) -> str:
     c = p["candidate"]
     return (
-        f"**Projected goals for {c['player_name']} next season: ~{c['projected_goals']:.0f}**\n\n"
+        f"**Prediction: Projected goals for {c['player_name']} next season: ~{c['projected_goals']:.0f}**\n\n"
         f"Current season: {c['actual_goals']} goals in {c['minutes']:.0f} min "
         f"({c['goals_per90']:.2f}/90)\n"
         f"OVR {c['overall']} | shooting {c['shooting']} | age {c['age']}\n"

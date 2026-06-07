@@ -474,7 +474,7 @@ def format_group_prediction(result: dict) -> str:
     if "error" in result:
         return result["error"]
     grp = result["group"]
-    lines = [f"**World Cup 2026 — Group {grp} predicted standings:**\n",
+    lines = [f"**Prediction: World Cup 2026 — Group {grp} predicted standings:**\n",
              f"{'Pos':<4} {'Team':<25} {'Exp Pts':<10} {'Exp GD':<8} {'Strength':<9} {'Status'}"]
     lines.append("-" * 65)
     for r in result["table"]:
@@ -493,7 +493,7 @@ def format_group_prediction(result: dict) -> str:
 def format_wc_winner(result: dict) -> str:
     cands = result["candidates"]
     n = result["n_sims"]
-    lines = [f"**World Cup 2026 — tournament winner probabilities ({n:,} simulations):**\n"]
+    lines = [f"**Prediction: World Cup 2026 — tournament winner probabilities ({n:,} simulations):**\n"]
     for i, c in enumerate(cands[:10], 1):
         bar = "█" * int(c["win_prob"] / 2)
         lines.append(
@@ -508,7 +508,7 @@ def format_wc_winner(result: dict) -> str:
 
 def format_wc_top_scorer(result: dict) -> str:
     cands = result["candidates"]
-    lines = ["**World Cup 2026 — Golden Boot candidates (projected goals):**\n",
+    lines = ["**Prediction: World Cup 2026 — Golden Boot candidates (projected goals):**\n",
              f"{'#':<4} {'Player':<24} {'Team':<22} {'Pos':<20} {'G/90':<7} {'SHT':<6} {'xGames':<8} {'Proj WC Goals'}"]
     lines.append("-" * 95)
     for i, c in enumerate(cands, 1):
@@ -532,7 +532,7 @@ def format_wc_match(result: dict) -> str:
     sa, sb = result["scoreline"]
     winner = a if sa > sb else b if sb > sa else "Draw"
     lines = [
-        f"**World Cup 2026 match prediction: {a} vs {b}** (neutral ground)\n",
+        f"**Prediction: World Cup 2026 match prediction: {a} vs {b}** (neutral ground)\n",
         f"Predicted result: **{winner}** — {a} {sa}–{sb} {b}",
         f"Probabilities: {a} {round(result['p_a']*100)}% | draw {round(result['p_draw']*100)}% | {b} {round(result['p_b']*100)}%",
         f"Expected goals: {a} {result['xg_a']} — {b} {result['xg_b']}",

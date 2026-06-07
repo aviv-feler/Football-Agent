@@ -15,8 +15,8 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       # Primary model (now read by the code). Change here or in the dashboard without
-      # editing code; the app appends gpt-4o-mini as an automatic fallback.
+      # editing code. Use the full reasoning model for routing and final answers.
       - key: OPENAI_MODEL
-        value: gpt-5-mini
+        value: gpt-5.5
       - key: FOOTBALL_DATA_API_KEY
         sync: false
