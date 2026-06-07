@@ -504,15 +504,30 @@ def select_context_aware_scoreline(dist: dict, profile: str,
                                     p_home: float, p_draw: float, p_away: float) -> tuple[int,int]:
     """
     Context-aware scoreline selector.
-    final_score = poisson_prob*0.45 + profile_fit*0.25 + xg_fit*0.15
-                  + margin_fit*0.10 + rarity_penalty*0.05
+    final_score = poisson_prob*0.40 + rf_align*0.20 + profile_fit*0.20 + xg_fit*0.10
+                  + margin_fit*0.05 + rarity_penalty*0.05
+
+    rf_align ensures the selected scoreline agrees with the RF outcome classifier so the
+    text summary and the predicted result are never contradictory (e.g. "1-1" when the
+    model predicts a home win).
     """
     bounds = _PROFILE_BOUNDS.get(profile, (0, 5, 0, 5))
     hlo, hhi, alo, ahi = bounds
     best_score, best = -1.0, (1, 1)
-    win_margin = xg_h - xg_a            # positive → home stronger
+    win_margin = xg_h - xg_a
+    rf_outcome = ("H" if p_home >= max(p_home, p_draw, p_away)
+                  else "A" if p_away >= max(p_home, p_draw, p_away)
+                  else "D")
 
     for (h, a), prob in dist.items():
+        # RF alignment: strongly prefer scorelines that agree with the RF outcome label
+        is_draw = (h == a)
+        if rf_outcome == "H":
+            rf_align = 1.0 if h > a else (0.35 if is_draw else 0.65)
+        elif rf_outcome == "A":
+            rf_align = 1.0 if a > h else (0.35 if is_draw else 0.65)
+        else:
+            rf_align = 1.0 if is_draw else 0.65
         # profile fit: prefer scorelines within the profile's expected range
         prof_fit = 1.0 if (hlo <= h <= hhi and alo <= a <= ahi) else 0.3
         # xG rounding fit: prefer scorelines closest to xG
@@ -526,10 +541,11 @@ def select_context_aware_scoreline(dist: dict, profile: str,
         # extreme score penalty
         rarity = 1.0 if h + a <= 5 else 0.5
 
-        combined = (0.45 * prob / max(dist.values()) +
-                    0.25 * prof_fit +
-                    0.15 * xg_fit +
-                    0.10 * margin_fit +
+        combined = (0.40 * prob / max(dist.values()) +
+                    0.20 * rf_align +
+                    0.20 * prof_fit +
+                    0.10 * xg_fit +
+                    0.05 * margin_fit +
                     0.05 * rarity)
         if combined > best_score:
             best_score, best = combined, (h, a)

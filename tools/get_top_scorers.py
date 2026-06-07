@@ -43,7 +43,10 @@ def make_get_top_scorers_tool():
     def get_top_scorers(competition: str) -> str:
         """
         Get the LIVE current-season top scorers for a league from the football-data.org API.
-        Use this for fresh "top scorer / golden boot / who scored the most this season"
+        IMPORTANT: this tool only has CURRENT-SEASON data. It cannot return last season's
+        top scorers. If the user asks for 'last season', answer with the current season and
+        note that only current-season data is available.
+        Use this for "top scorer / golden boot / who scored the most this season/last season"
         questions. Examples: 'Premier League', 'La Liga', 'Serie A', 'Bundesliga'.
         Input is the competition name as a string.
         """

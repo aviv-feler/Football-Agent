@@ -33,15 +33,20 @@ def make_scouting_tools(scout: ScoutingEngine) -> list:
         return err or generate_scouting_response(result)
 
     @tool
-    def find_replacement(player_name: str, club: str = "", max_age: int = 0) -> str:
+    def find_replacement(player_name: str, club: str = "", max_age: int = 0,
+                         role: str = "") -> str:
         """
         Find REPLACEMENT options for a reference player (similarity + potential + current
         ability + age fit + data reliability, same role). Use for "who can replace X".
         player_name: the player to replace (corrected full name).
         club: optional club to exclude (prefer external replacements), e.g. "Chelsea".
         max_age: optional age ceiling for the replacement (0 = no limit).
+        role: optional role override if the player's detected position is wrong, e.g.
+              "fullback" for a left-back, "centre_back", "winger", "striker", "playmaker".
+              Use when the user specifies the position they want.
         """
-        result, err = scout.find_replacement(player_name, club=club, max_age=max_age or 0)
+        result, err = scout.find_replacement(player_name, club=club, max_age=max_age or 0,
+                                             role_override=role)
         return err or generate_scouting_response(result)
 
     @tool
@@ -74,7 +79,8 @@ def make_scouting_tools(scout: ScoutingEngine) -> list:
 
     @tool
     def find_wonderkids(role: str = "", positions: str = "", max_age: int = 21,
-                        min_potential: int = 80, important_features: str = "") -> str:
+                        min_potential: int = 80, important_features: str = "",
+                        max_overall: int = 0) -> str:
         """
         Find young high-POTENTIAL prospects (wonderkids). Use for "best young prospects /
         wonderkids", optionally by role/position. Ranking is potential-led.
@@ -82,10 +88,13 @@ def make_scouting_tools(scout: ScoutingEngine) -> list:
         positions: optional comma list of FIFA codes.
         max_age: age ceiling (default 21). min_potential: potential floor (default 80).
         important_features: optional comma list of features to emphasise.
+        max_overall: optional overall rating ceiling — use to find lesser-known / cheaper
+                     wonderkids, e.g. max_overall=72 filters out already-expensive stars.
         """
         result, err = scout.find_wonderkids(
             role=role, positions=_positions(positions), age_max=max_age or 21,
             potential_min=min_potential or 80, important_features=_features(important_features),
+            max_overall=max_overall or 0,
         )
         return err or generate_scouting_response(result)
 

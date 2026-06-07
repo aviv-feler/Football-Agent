@@ -58,9 +58,15 @@ HOW TO THINK:
 3. NORMALIZE ENTITIES TO CANONICAL ENGLISH before every tool call, whatever language the
    user wrote in — tools only understand English names:
    • "הליגה האנגלית" / "פריימר ליג" / "ליגה אנגלית" / "אליפות אנגליה" → "Premier League"
-   • "לה ליגה"→"La Liga", "סדרה א"→"Serie A", "בונדסליגה"→"Bundesliga", "ליגה 1"→"Ligue 1"
+   • "לה ליגה"→"La Liga", "סדרה א"→"Serie A", "בונדסליגה"/"אליפות גרמניה"→"Bundesliga", "ליגה 1"→"Ligue 1"
    • "ריאל מדריד"→"Real Madrid", "ברצלונה"/"barca"→"Barcelona", "מבאפה"/"mbape"→"Kylian Mbappé"
    • "מי זכתה באליפות הליגה האנגלית?" → call get_live_standings("Premier League") and report the leader.
+   CLUB → LEAGUE shortcuts (never ask the user to confirm these):
+   • Arsenal, Chelsea, Liverpool, Man City, Man United, Tottenham, Newcastle → Premier League
+   • Barcelona, Real Madrid, Atletico Madrid, Sevilla → La Liga
+   • Bayern Munich, Dortmund, Leverkusen → Bundesliga
+   • Juventus, Inter, AC Milan, Napoli → Serie A
+   • PSG, Monaco, Lyon, Marseille → Ligue 1
 4. Call each tool AT MOST ONCE per question. Do NOT call two overlapping tools for the same
    thing (use predict_wc_match OR predict_match, not both; call get_national_squad once).
 5. Use your own football knowledge ONLY for opinion/tactics/history questions
@@ -90,27 +96,43 @@ PREDICTION:
 - predict_match(team1, team2)         → national/club match result (squad-strength + historical ratings)
 SCOUTING:
 - find_similar_player(player_name)    → cosine-similarity players
-- find_replacement(player_name, club, max_age) → replacement candidates
-- search_by_profile(role, positions, max_age, min_potential, important_features, description) → profile search
-- find_wonderkids(role, positions, max_age, min_potential) → young high-potential prospects
+- find_replacement(player_name, club, max_age, role) → replacement candidates; pass role="fullback"/"centre_back"/etc. to override detected position
+- search_by_profile(role, positions, max_age, min_potential, important_features, description) → profile search (no specific player)
+- find_wonderkids(role, positions, max_age, min_potential, max_overall) → young high-potential prospects; use max_overall to filter cheaper/lesser-known players
 ANALYSIS:
-- get_player_archetype(player)        → K-Means cluster role
+- get_player_archetype(player)        → K-Means cluster role + attribute radar card for a SPECIFIC NAMED player
 - detect_anomalies(filter)            → Z-score over/under-performers
 - compare_players_jaccard(a vs b)     → side-by-side stats + trait overlap
 SQUADS & LIVE DATA:
 - get_national_squad(team)            → OFFICIAL WC 2026 squad / roster / called-up players + each player's CURRENT club (source of truth)
 - get_live_standings(competition)     → LIVE league table (football-data.org)
-- get_top_scorers(competition)        → LIVE current-season scorers (football-data.org)
+- get_top_scorers(competition)        → LIVE CURRENT-SEASON scorers only (football-data.org); cannot return last season
 - world_cup_info(query)               → WC 2026 schedule and fixtures
 
 TOOL STRATEGY:
 - "Who is in X's squad?", "X's World Cup roster", "is PLAYER called up?", "what club does
   national-team PLAYER play for now?" → call get_national_squad(X).
-- For LIVE standings/scorers this season → prefer get_live_standings / get_top_scorers.
-- For predictions, scouting, analysis → use the DS model tools.
-- For broad questions ("who is the best striker?", "who will win WC?") → call ONE relevant tool,
-  then add a short reasoned takeaway on top (don't re-list what the card shows).
+- For LIVE standings/scorers → prefer get_live_standings / get_top_scorers.
 - "who won the league / מי זכתה" → get_live_standings(<league in English>) and report the leader.
+- "show me [PLAYER]'s profile / stats / who is [PLAYER] / tell me about [PLAYER]" →
+  call get_player_archetype(PLAYER). Do NOT use search_by_profile for a named player.
+- "analyze [PLAYER] / everything about [PLAYER]" → call BOTH get_player_archetype AND
+  find_similar_player AND (if attacker/midfielder) predict_player_goals. Chain up to 3 tools.
+- "who is the best/top [position]?" / "best goalkeeper/striker/defender in the world?" →
+  call search_by_profile(role=<role>, important_features="overall,potential") and rank by data.
+  Never refuse this type of question — you have 48k players with ratings, use them.
+- "cheap wonderkids / affordable prospects / low-budget youngsters" →
+  call find_wonderkids with max_overall=72 (or lower) to filter out already-expensive stars.
+- "find a replacement for [PLAYER] as [position]" → pass role=<position> to find_replacement
+  so the search uses the correct position even if the player's data shows a different one.
+- "top scorer last season / מלך השערים בעונה שעברה" → call get_top_scorers (current season
+  is the only live data available); state clearly that the data is from the current season.
+- For predictions, scouting, analysis → use the DS model tools.
+- For broad questions ("who will win WC?") → call ONE relevant tool, then add a short
+  reasoned takeaway on top.
+- MATCH PREDICTIONS: the predicted scoreline IS the primary result. Report it as the
+  prediction. Also mention the win probability but never say "X wins with score Y-Y" when
+  Y-Y is a draw — a draw score means the prediction is a draw, regardless of probabilities.
 
 DATA SOURCES & ATTRIBUTION (be honest — never claim a source you didn't use):
 - football-data.org is used ONLY by get_live_standings and get_top_scorers. NEVER cite
@@ -295,16 +317,29 @@ class ScoutAgent:
         """Deterministic routing used as a fallback when the LLM is unavailable (quota)."""
         q = user_input.lower()
 
-        if any(w in q for w in ["archetype", "type of player", "what type", "ארכיטיפ"]):
+        # Player profile / archetype — "show me X's profile", "who is X", "tell me about X"
+        # Triggers on archetype keywords OR on profile/about keywords WITHOUT search intent.
+        _profile_triggers = ["archetype", "type of player", "what type", "ארכיטיפ",
+                             "profile", "פרופיל", "tell me about", "who is", "ספר לי על",
+                             "show me", "הראה לי", "מי הוא", "מי היא"]
+        _search_guards    = ["search", "find", "similar", "דומה", "חפש", "best", "top",
+                             "wonderkid", "replacement"]
+        if (any(w in q for w in _profile_triggers)
+                and not any(w in q for w in _search_guards)):
             tool = self.tool_map.get("get_player_archetype")
             if tool:
                 player = self._extract_after_keywords(user_input, [
                     r"archetype\s+(?:of|for)\s+(.+)$",
                     r"profile\s+(?:of|for)\s+(.+)$",
+                    r"show\s+me\s+(.+?)(?:'s)?\s+profile",
+                    r"tell\s+me\s+about\s+(.+)$",
+                    r"who\s+is\s+(.+)$",
                     r"type\s+of\s+player\s+is\s+(.+)$",
                     r"what\s+type\s+of\s+player\s+is\s+(.+)$",
                     r"ארכיטיפ\s+של\s+(.+)$",
                     r"פרופיל\s+של\s+(.+)$",
+                    r"הראה\s+לי\s+(?:את\s+)?(.+?)(?:'s)?\s+פרופיל",
+                    r"ספר\s+לי\s+על\s+(.+)$",
                 ])
                 return str(tool.invoke(player))
 

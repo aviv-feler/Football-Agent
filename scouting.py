@@ -248,11 +248,13 @@ class ScoutingEngine:
         return {"type": "similar", "reference": self.pool.loc[idx, "player_name"], "role": role,
                 "reference_archetype": self.pool.loc[idx, "archetype"], "candidates": cards}, None
 
-    def find_replacement(self, name: str, club: str = "", max_age: int = 0, limit: int = 5):
+    def find_replacement(self, name: str, club: str = "", max_age: int = 0, limit: int = 5,
+                          role_override: str = ""):
         idx = self.resolve(name)
         if idx is None:
             return None, f"Could not find a player matching '{name}' with attribute data."
-        role = self.role_of(idx)
+        role = (role_override if role_override and role_override in ROLE_POSITIONS
+                else self.role_of(idx))
         ref_age = float(self.pool.loc[idx, "age"] or 27)
         weights = WEIGHT_PRESETS.get(role, WEIGHT_PRESETS["default"])
         group, subs = ROLE_POSITIONS.get(role, (self.pool.loc[idx, "position"], None))
@@ -296,12 +298,15 @@ class ScoutingEngine:
                 "candidates": cards}, None
 
     def find_wonderkids(self, role: str = "", positions=None, age_max: int = 21,
-                        potential_min: int = 80, important_features=None, limit: int = 5):
+                        potential_min: int = 80, important_features=None, limit: int = 5,
+                        max_overall: int = 0):
         target, weights = self.build_target_profile(important_features, role)
         important = list(weights.keys())
         mask = self._position_mask(role, positions)
         mask &= pd.to_numeric(self.pool["age"], errors="coerce").fillna(99) <= (age_max or 21)
         mask &= pd.to_numeric(self.pool["fc_potential"], errors="coerce").fillna(0) >= (potential_min or 80)
+        if max_overall:
+            mask &= pd.to_numeric(self.pool["fc_overall"], errors="coerce").fillna(99) <= max_overall
         cand = self.pool.index[mask]
         if len(cand) == 0:
             return None, "No wonderkids matched those filters (try relaxing age or potential)."
@@ -449,13 +454,12 @@ def generate_scouting_response(result: dict) -> str:
         "profile":     f"Profile matches — {result.get('role')}",
         "wonderkid":   f"Top wonderkids — {result.get('role')}",
     }.get(t, "Scouting results")
-    use_sim = (t == "similar")
     items = [{
         "name": c["player_name"],
-        "pct": float(c["similarity"] if use_sim else c["fit"]),
+        "pct": float(c["fit"]),  # always composite fit so card order matches text order
         "pos": c["position"],
         "sub": c.get("club") or "",
         "tags": (c.get("strengths") or [])[:3],
     } for c in result["candidates"][:5]]
-    viz = {"type": "similarity", "title": title, "metric": "match" if use_sim else "fit", "items": items}
+    viz = {"type": "similarity", "title": title, "metric": "fit", "items": items}
     return embed_viz("\n".join(lines), viz)
