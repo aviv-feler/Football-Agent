@@ -150,8 +150,10 @@ MODEL_CHAIN = [
     "gemini-2.5-flash",        # ראשי — חכם יותר לניתוב וניסוח
     "gemini-flash-latest",     # גיבוי באותה רמה
     "gemini-2.5-flash-lite",   # גיבוי קל יותר (מכסה נפרדת)
-    "gemini-flash-lite-latest",
     "gemini-2.0-flash",
+    # gemini-flash-lite-latest removed: rejects tool-call histories that contain
+    # thought_signatures from other models, causing infinite _RecoverableModelError
+    # restart loops that spin until the gunicorn worker is SIGKILLed.
 ]
 
 
@@ -535,6 +537,7 @@ class ScoutAgent:
 
         quota_hit = False
         viz_box: list = []
+        recoverable_errors = 0
         # Each restart begins from a clean copy of `base`, so a model that chokes on
         # another model's tool-call history never poisons the retry.
         for _restart in range(len(self.llms)):
@@ -545,6 +548,13 @@ class ScoutAgent:
                 quota_hit = True
                 break
             except _RecoverableModelError:
+                recoverable_errors += 1
+                if recoverable_errors >= len(self.llms):
+                    # Every model has rejected the history — treat as quota exhausted
+                    # so we fall through to the deterministic router instead of looping
+                    # until the gunicorn worker is killed.
+                    quota_hit = True
+                    break
                 continue  # _call_llm already advanced model_idx; retry the turn cleanly
             if answer is not None:
                 # The final answer is normally clean LLM prose; split_viz also covers the
@@ -562,7 +572,7 @@ class ScoutAgent:
             self._remember(session_id, user_input, clean)
             return clean, viz
         if quota_hit:
-            return ("ScoutAI has reached today's free Gemini quota and this question "
+            return ("FOOTBOT has reached today's free Gemini quota and this question "
                     "needs the language model. The quota resets daily — please try "
                     "again later, or ask directly for similar players, a scouting "
                     "list, a prediction, standings, or top scorers.", None)
