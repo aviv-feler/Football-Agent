@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from agent import load_resources, build_agent
+from agent import load_resources, build_agent, DEMO_QUERIES
 
 app = Flask(__name__)
 
@@ -75,6 +75,16 @@ except Exception as _e:
 # Per-session locks so concurrent users don't block each other.
 _session_locks: dict = {}
 _session_locks_lock = threading.Lock()
+# Background demo warm-up state. Running all ~26 demo questions synchronously inside the
+# /warmup request would blow past gunicorn's --timeout and get the single worker SIGKILLed
+# (→ "Internal Server Error", nothing cached). So /warmup starts a daemon thread and the
+# progress is polled via /warmup/status.
+_warmup_lock = threading.Lock()
+_warmup_state: dict = {
+    "running": False, "done": False, "started_at": None,
+    "elapsed": 0.0, "cached": 0, "total": len(DEMO_QUERIES),
+    "results": None, "error": None,
+}
 # Warm the league-table carousel cache in the background (non-blocking).
 import live_tables as _live_tables
 _live_tables.prefetch(os.getenv("FOOTBALL_DATA_API_KEY", ""))
@@ -212,24 +222,73 @@ def league_tables():
     return jsonify({"leagues": _live_tables.get_tables(os.getenv("FOOTBALL_DATA_API_KEY", ""))})
 
 
+def _public_warmup_state() -> dict:
+    """Snapshot of the warm-up state, with live progress, safe to return as JSON."""
+    with _warmup_lock:
+        st = dict(_warmup_state)
+    st["cache_size"] = len(_agent.response_cache)   # live: answers cached so far
+    if st["running"] and st["started_at"]:
+        st["elapsed"] = round(_time.time() - st["started_at"], 1)
+    if not st["done"]:
+        st.pop("results", None)                     # the full report only once finished
+    return st
+
+
+def _run_warmup_bg():
+    """Run the (slow) demo warm-up off the request thread so it can't trip the gunicorn
+    timeout. Always clears `running` so a failure can't wedge the state forever."""
+    t0 = _time.time()
+    error = None
+    report = []
+    try:
+        report = _agent.warmup()
+    except Exception as e:                           # never let the thread die silently
+        error = str(e)
+        print(f"[app] Warmup thread error: {e}", flush=True)
+    ok = sum(1 for r in report if r.get("ok"))
+    with _warmup_lock:
+        _warmup_state.update(running=False, done=True, elapsed=round(_time.time() - t0, 1),
+                             cached=ok, results=report, error=error)
+    print(f"[app] Warmup finished in {_time.time()-t0:.1f}s (cached {ok}/{len(report)}).", flush=True)
+
+
 @app.route("/warmup", methods=["GET", "POST"])
 def warmup():
     """Pre-compute + cache the fixed demo questions so they answer INSTANTLY on stage.
-    Call this once before the presentation (e.g. open /warmup in the browser). Runs each
-    demo query through the agent one time (uses the LLM once each), then every later ask
-    of those questions is served from cache with no API call. Returns a timing report."""
-    t0 = _time.time()
-    report = _agent.warmup()
-    total = round(_time.time() - t0, 1)
-    ok = sum(1 for r in report if r["ok"])
+    Call this once before the presentation, then poll /warmup/status until done=true.
+
+    Runs in the BACKGROUND: executing ~26 demo queries synchronously here would exceed
+    gunicorn's --timeout and get the worker killed (the old behaviour → 500). This starts a
+    daemon thread and returns immediately. Pass ?force=1 to re-run after it has finished."""
+    force = (request.args.get("force") or "").lower() in ("1", "true", "yes")
+    with _warmup_lock:
+        if _warmup_state["running"]:
+            running_state = True
+            already_done = False
+        else:
+            already_done = _warmup_state["done"] and not force
+            running_state = False
+            if not already_done:
+                _warmup_state.update(running=True, done=False, started_at=_time.time(),
+                                     elapsed=0.0, results=None, error=None,
+                                     cached=len(_agent.response_cache))
+    if running_state:
+        return jsonify({"status": "already_running", **_public_warmup_state()}), 202
+    if already_done:
+        return jsonify({"status": "already_done", **_public_warmup_state()})
+    threading.Thread(target=_run_warmup_bg, name="warmup", daemon=True).start()
     return jsonify({
-        "ok": ok == len(report),
-        "cached": ok,
-        "total": len(report),
-        "warmup_seconds": total,
-        "cache_size": len(_agent.response_cache),
-        "results": report,
-    })
+        "status": "started",
+        "message": "Warm-up running in the background. Poll /warmup/status until \"done\": true.",
+        "total": _warmup_state["total"],
+        "status_url": "/warmup/status",
+    }), 202
+
+
+@app.route("/warmup/status")
+def warmup_status():
+    """Progress/result of the background warm-up started by /warmup."""
+    return jsonify(_public_warmup_state())
 
 
 @app.route("/healthz")
