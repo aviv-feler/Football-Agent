@@ -259,6 +259,8 @@ class ScoutingEngine:
 
     # ---- core ranking -------------------------------------------------------
     def calculate_weighted_similarity(self, target: dict, weights: dict, cand_idx) -> np.ndarray:
+        """Role-weighted Euclidean similarity to an ideal target vector. Used by
+        replacement/profile/wonderkid searches where the target is a synthetic ideal."""
         feats = [f for f in weights if f in self.N.columns]
         w = np.array([weights[f] for f in feats], dtype=float)
         w = w / w.sum() if w.sum() > 0 else w
@@ -266,6 +268,24 @@ class ScoutingEngine:
         t = np.array([target.get(f, 0.5) for f in feats])
         dist = np.sqrt((((C - t) ** 2) * w).sum(axis=1))
         return 1.0 / (1.0 + dist)
+
+    def calculate_weighted_cosine(self, target: dict, weights: dict, cand_idx) -> np.ndarray:
+        """Role-weighted cosine similarity between a reference player vector and the
+        candidate vectors. cos = Σ w·a·b / (sqrt(Σ w·a²) · sqrt(Σ w·b²)). Output is the
+        cosine score in [0, 1] (vectors live in the normalized [0,1] feature space, so
+        negative scores can't happen)."""
+        feats = [f for f in weights if f in self.N.columns]
+        w = np.array([weights[f] for f in feats], dtype=float)
+        w = w / w.sum() if w.sum() > 0 else w
+        C = self.N.loc[cand_idx, feats].fillna(0.5).values            # (n_cand, n_feat)
+        t = np.array([target.get(f, 0.5) for f in feats])             # (n_feat,)
+        dot     = (C * t * w).sum(axis=1)
+        norm_C  = np.sqrt(((C ** 2) * w).sum(axis=1))
+        norm_t  = np.sqrt(((t ** 2) * w).sum())
+        denom   = norm_C * norm_t
+        # Guard against a zero-norm candidate (all features filled to the same neutral
+        # value) — return 0 similarity instead of NaN.
+        return np.where(denom > 0, dot / np.where(denom > 0, denom, 1.0), 0.0)
 
     def _age_fit(self, cand_idx, mode: str, ref_age: float | None = None, age_max: int | None = None) -> np.ndarray:
         ages = pd.to_numeric(self.pool.loc[cand_idx, "age"], errors="coerce").fillna(27).values
@@ -343,7 +363,11 @@ class ScoutingEngine:
         mask = (self.pool["position"] == group) & (self.pool.index != idx)
         cand = self.pool.index[mask]
         target = self.build_player_vector(idx)
-        sim = self.calculate_weighted_similarity(target, weights, cand)
+        # Player-to-player similarity uses cosine (compares the SHAPE of the two style
+        # vectors; magnitude is irrelevant). The other scouting paths
+        # (replacement/profile/wonderkid) rank against a synthetic ideal target and keep
+        # weighted Euclidean — Euclidean distance to an ideal is the natural metric there.
+        sim = self.calculate_weighted_cosine(target, weights, cand)
         composite = {"sim": .60, "pot": .10, "cur": .15, "age": .00, "rel": .15}
         ranked = self.rank_candidates(cand, sim, composite, {"mode": "neutral"}, limit)
         cards = [self._card(it, role, reference_idx=idx) for it in ranked]
@@ -698,7 +722,7 @@ def generate_scouting_response(result: dict) -> str:
             + (f" | caveats: {', '.join(c['weaknesses'])}" if c["weaknesses"] else "")
         )
     method = {
-        "similar": "Role-weighted similarity (weighted Euclidean on performance attributes + per-90 features) within position group.",
+        "similar": "Role-weighted cosine similarity between player vectors (performance attributes + per-90 features), within the same position group.",
         "replacement": "Role-weighted similarity + multi-factor score (potential, current ability, age fit, data reliability), same role, optional club exclusion.",
         "profile": "Target-profile vector + role-weighted similarity + multi-factor ranking, filtered by position/age/potential.",
         "wonderkid": "Age/potential filter + role-weighted profile similarity, potential-led multi-factor ranking.",

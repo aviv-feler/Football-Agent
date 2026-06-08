@@ -31,19 +31,19 @@ Runtime sources actually used:
 6. **Historical match results** → `data/national_matches.csv`, `data/club_matches.csv`, `data/games.csv`.
 7. **Precomputed DS artifacts** → `data/player_features.npy`, `data/feature_meta.json`.
 
-### 3. Similarity model (real, not the LLM) — ⚠️ PARTIAL
+### 3. Similarity model (real, not the LLM) — ✅ DONE
 - **Jaccard — ✅ active & real.** `tools/compare_players_jaccard.py` → `ds_engine.jaccard()` on
   categorical trait sets (`ds_engine.trait_set`: position, sub_position, nationality, foot, league,
   age_bucket, value_tier, archetype). Example: *"Compare Mbappé and Vinicius Jr."*
-- **Similar-players — ✅ real, but it's weighted EUCLIDEAN, not cosine.**
-  Active tool = `tools/scouting_tools.py` `find_similar_player` → `scouting.calculate_weighted_similarity`
-  (`scouting.py:164`): `dist = sqrt(Σ w·(C−t)²)`, `sim = 1/(1+dist)` on normalized FC26 + per-90
-  features. Real numeric computation, not the LLM. Example: *"Find players similar to Rodri."*
-- **Cosine similarity — ⚠️ implemented but NOT wired into the live agent.**
-  `ds_engine.cosine()` / `cosine_to_vector()` exist and are real, but the cosine tool
-  (`tools/find_similar_players.py`) is **not registered** in `build_agent` (confirmed — no import).
-  Cosine only runs in the **disabled** `football_qa.py` pipeline (off unless `SCOUTAI_ENABLE_SMART_QA=1`)
-  and offline in `data_manager.py`. **If the rubric specifically wants cosine as a live feature, this is a gap.**
+- **Cosine similarity — ✅ active & real.** `tools/scouting_tools.py` `find_similar_player` →
+  `scouting.calculate_weighted_cosine`: `cos = Σ w·a·b / (sqrt(Σ w·a²) · sqrt(Σ w·b²))` on
+  normalized performance attributes + per-90 features, within the same position group. The
+  pill shown to the user is "Cosine Similarity". Example: *"Find players similar to Bellingham."*
+- **Weighted Euclidean — ✅ active & real (different feature).** The other scouting paths
+  (`find_replacement`, `search_by_profile`, `find_wonderkids`) rank candidates against a
+  synthetic ideal-target vector via `calculate_weighted_similarity`
+  (`dist = sqrt(Σ w·(C−t)²)`, `sim = 1/(1+dist)`). These show the "Content-Based Filtering"
+  pill because that's exactly what they do (content-based scout against a target profile).
 
 ### 4. Clustering (K-Means, real) — ✅ DONE (computed offline, used live)
 - K-Means is run in the **data-prep pipeline** (`data_prep.py:298/382/455`, `data_manager.py:555`,
@@ -105,8 +105,8 @@ Runtime sources actually used:
 | Model | Course algorithm | Data columns / tables | Real or faked | Example query | Live? |
 |---|---|---|---|---|---|
 | Jaccard | Jaccard similarity | trait sets from `players_clean` (position, nationality, foot, league, age_bucket, value_tier, archetype) | **Real** | "Compare Mbappé and Vinícius" | ✅ |
-| Similar players | (weighted Euclidean) | `fc_pace/shooting/passing/dribbling/defending/physic` + per-90 (normalized) | **Real** | "Players similar to Rodri" | ✅ |
-| Cosine similarity | Cosine | `player_features.npy` (16-d vectors) | **Real but offline** | — (not wired live) | ⚠️ no |
+| Similar players | **Cosine** (weighted) | `fc_pace/shooting/passing/dribbling/defending/physic` + per-90 (normalized) | **Real** | "Players similar to Bellingham" | ✅ |
+| Content-based scout (target) | (weighted Euclidean) | same features, vs synthetic ideal-target vector | **Real** | "Young high-potential CB" | ✅ |
 | K-Means | K-Means clustering | feature vectors → `cluster`/`archetype` + `feature_meta.json` centroids | **Real (offline prep)** | "What type of player is Haaland?" | ✅ (consumed) |
 | Anomaly | Z-score in cluster | `X`, cluster mean/std | **Real** | "Overperformers in Serie A" | ✅ |
 | Content-based scout | Content-based filtering | FC26 attrs + per-90 + potential/age | **Real** | "Young high-potential CB" | ✅ |
@@ -123,7 +123,7 @@ Runtime sources actually used:
 |---|---|---|---|---|
 | 1 | Free NL agent (He/En) | ✅ | `agent.py` invoke / `_detect_language` | Verified live both languages |
 | 2 | ≥2 external sources | ✅ | `tools/get_live_standings.py` + `data/*.csv` | API + Transfermarkt + FBref + FC26 + squads |
-| 3 | Similarity (real) | ⚠️ | `compare_players_jaccard.py`, `scouting.py:164` | Jaccard+Euclidean live & real; **cosine not wired** |
+| 3 | Similarity (real) | ✅ | `compare_players_jaccard.py`, `scouting.calculate_weighted_cosine` | Jaccard + Cosine (similar players) + Euclidean (target scout) — all live & real |
 | 4 | Clustering (real) | ✅ | `data_prep.py` KMeans → `get_player_archetype.py` | Computed offline, used live |
 | 5 | Recommendations | ✅ | `scouting.py` search/wonderkids | Real weighted similarity |
 | 6 | Anomaly detection | ✅ | `detect_anomalies.py` / `ds_engine.zscores` | Z-score vs cluster, exposed |
@@ -144,9 +144,9 @@ Runtime sources actually used:
    Poisson/RF predictors.
 2. **(HIGH) Add an off-domain refusal** to `SYSTEM_PROMPT` (politely decline non-football questions) —
    requirement #8. Quick prompt change.
-3. **(MEDIUM) Cosine similarity** — if the rubric expects cosine specifically, wire
-   `tools/find_similar_players.py` (cosine) as the "similar players" tool, or rename the active
-   weighted-Euclidean method honestly. Today the similar-player pill reads "Content-Based Filtering".
+3. ✅ **DONE — Cosine similarity is now the active "similar players" metric** via
+   `scouting.calculate_weighted_cosine`. The Method line says "Role-weighted cosine similarity
+   between player vectors..." and the pill reads "Cosine Similarity".
 4. **(MEDIUM) Confirm the live Render deployment** (public URL up, both API keys set) — requirement #9.
 5. **(LOW) Be ready to explain** that K-Means runs in the data-prep pipeline (offline) and its output
    drives archetype + anomaly answers.

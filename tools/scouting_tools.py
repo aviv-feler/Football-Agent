@@ -27,7 +27,7 @@ def make_scouting_tools(scout: ScoutingEngine) -> list:
     def find_similar_player(player_name: str) -> str:
         """
         Find players most SIMILAR to a reference player, using role-aware weighted
-        similarity on performance attributes + per-90 output (not text matching). Use for
+        cosine similarity on performance attributes + per-90 output (not text matching). Use for
         "who is similar to X / plays like X". Pass the corrected full player name.
         """
         result, err = scout.find_similar_player(player_name)
