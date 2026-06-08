@@ -491,19 +491,25 @@ def format_group_prediction(result: dict) -> str:
 
 
 def format_wc_winner(result: dict) -> str:
+    from viz import embed_viz
     cands = result["candidates"]
     n = result["n_sims"]
-    lines = [f"**Prediction: World Cup 2026 — tournament winner probabilities ({n:,} simulations):**\n"]
-    for i, c in enumerate(cands[:10], 1):
-        bar = "█" * int(c["win_prob"] / 2)
-        lines.append(
-            f"{i:>2}. **{c['team']:<22}** {c['win_prob']:>5}% to win  "
-            f"| {c['semi_prob']:>5}% to reach semi  {bar}"
-        )
-    lines.append(f"\n🔍 Method: Monte Carlo tournament simulation ({n:,} runs). Group goals via "
-                 "Poisson distribution; knockout match outcomes via a logistic (softmax) function on "
-                 "hybrid team strength = squad market value blended with Elo from historical WC results.")
-    return "\n".join(lines)
+    items = [{"name": c["team"], "win": round(c["win_prob"], 1), "semi": round(c["semi_prob"], 1)}
+             for c in cands[:10]]
+    viz = {
+        "type": "wc_winner",
+        "title": f"World Cup 2026 — title odds ({n:,} simulations)",
+        "items": items,
+    }
+    favourites = ", ".join(c["team"] for c in cands[:3])
+    text = (
+        f"**Prediction: World Cup 2026 — tournament winner probabilities ({n:,} simulations).**\n\n"
+        f"Favourites: {favourites}.\n\n"
+        f"🔍 Method: Monte Carlo tournament simulation ({n:,} runs). Group goals via Poisson "
+        "distribution; knockout match outcomes via a logistic (softmax) function on hybrid team "
+        "strength = squad market value blended with Elo from historical WC results."
+    )
+    return embed_viz(text, viz)
 
 
 def format_wc_top_scorer(result: dict) -> str:

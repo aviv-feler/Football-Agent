@@ -11,6 +11,19 @@ from viz import embed_viz
 _PROFILE_ATTRS = [("Pace", "fc_pace"), ("Shooting", "fc_shooting"), ("Passing", "fc_passing"),
                   ("Dribbling", "fc_dribbling"), ("Defending", "fc_defending"), ("Physical", "fc_physic")]
 
+# Human-readable labels for the raw feature columns, so the narration reads naturally
+# (and translates cleanly to Hebrew, e.g. "goals per 90" → "שערים ל-90 דקות") instead of
+# leaking machine names like "goals_per90".
+_FEATURE_LABEL = {
+    "goals_per90": "goals per 90", "assists_per90": "assists per 90",
+    "ga_per90": "goals + assists per 90", "cards_per90": "cards per 90",
+    "minutes_played_log": "minutes played", "appearances_log": "appearances",
+    "age": "age", "height_in_cm": "height", "market_value_log": "market value",
+    "international_caps_log": "international caps", "fc_pace": "pace", "fc_shooting": "shooting",
+    "fc_passing": "passing", "fc_dribbling": "dribbling", "fc_defending": "defending",
+    "fc_physic": "physical",
+}
+
 
 def _to_int(v):
     try:
@@ -47,7 +60,8 @@ def make_get_player_archetype_tool(engine):
         z = engine.X[idx]
         ranked = sorted(range(len(feats)), key=lambda i: abs(z[i]), reverse=True)[:4]
         traits = [
-            f"{feats[i]} ({'high' if z[i] > 0 else 'low'}, z={z[i]:+.2f})"
+            f"{_FEATURE_LABEL.get(feats[i], feats[i].replace('_', ' '))} "
+            f"({'high' if z[i] > 0 else 'low'}, z={z[i]:+.2f})"
             for i in ranked
         ]
 

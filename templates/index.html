@@ -445,6 +445,20 @@
   .sm-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
   .sm-tags em { font-style: normal; font-size: .67rem; color: var(--text-muted); background: var(--glass); border: 1px solid var(--border); border-radius: 6px; padding: 2px 7px; }
 
+  /* World Cup winner odds */
+  .ww-row { display: grid; grid-template-columns: 16px 24px 1fr 1.15fr auto; align-items: center; gap: 9px; padding: 5px 0; border-top: 1px solid var(--hairline); font-size: .84rem; }
+  .ww-row:first-of-type { border-top: none; }
+  .ww-pos { font-family: var(--font-mono); font-size: .72rem; color: var(--text-dim); text-align: center; }
+  .ww-flag { display: inline-flex; align-items: center; }
+  .ww-flag .flag, .ww-flag img, .ww-flag .flag-unknown { width: 22px; height: 15px; border-radius: 3px; }
+  .ww-name { min-width: 0; display: flex; flex-direction: column; line-height: 1.18; }
+  .ww-name b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: .86rem; color: var(--text); }
+  .ww-name small { font-size: .63rem; color: var(--text-dim); }
+  .ww-track { height: 7px; background: rgba(255,255,255,.05); border-radius: 5px; overflow: hidden; }
+  .ww-track i { display: block; height: 100%; border-radius: 5px; background: linear-gradient(90deg, var(--blue), var(--cyan)); }
+  .ww-row.top .ww-track i { background: linear-gradient(90deg, var(--green), var(--cyan)); }
+  .ww-win { font-family: var(--font-mono); font-weight: 700; color: #eaf0ff; font-variant-numeric: tabular-nums; }
+
   /* player profile */
   .pf-head { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
   .pf-mono { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-family: var(--font-mono); font-weight: 700; font-size: .9rem; color: var(--blue-bright); background: var(--grad-soft); border: 1px solid var(--border-2); flex-shrink: 0; }
@@ -1099,6 +1113,17 @@
     return elFrom(`<div class="viz-card rk"><div class="viz-title">${_esc(v.title)}</div>${rows}</div>`);
   }
 
+  function vizWcWinner(v) {
+    const mx = Math.max(...v.items.map(i => i.win)) || 1;
+    const rows = v.items.map((it, i) => `<div class="ww-row${i === 0 ? ' top' : ''}">
+      <span class="ww-pos">${i + 1}</span>
+      <span class="ww-flag">${getFlag(it.name)}</span>
+      <span class="ww-name"><b>${_esc(it.name)}</b>${it.semi != null ? `<small>${_esc(it.semi)}% to reach semi</small>` : ''}</span>
+      <span class="ww-track"><i style="width:${Math.max(5, it.win / mx * 100).toFixed(0)}%"></i></span>
+      <span class="ww-win">${_esc(it.win)}%</span></div>`).join('');
+    return elFrom(`<div class="viz-card ww"><div class="viz-title">${_esc(v.title)}</div>${rows}</div>`);
+  }
+
   function vizSimilarity(v) {
     const rows = v.items.map(it => `<div class="sm-item">
       <div class="sm-row">
@@ -1198,6 +1223,7 @@
       if (v.type === 'profile')    return vizProfile(v);
       if (v.type === 'standings')  return vizStandings(v);
       if (v.type === 'compare')    return vizCompare(v);
+      if (v.type === 'wc_winner')  return vizWcWinner(v);
     } catch (e) { console.warn('viz render failed', e); }
     return null;
   }

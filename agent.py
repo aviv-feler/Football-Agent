@@ -1162,7 +1162,9 @@ class ScoutAgent:
                 "• dribbling → כדרור/דריבל  • potential → פוטנציאל  • assist → בישול  "
                 "• pass → מסירה  • shot → בעיטה  • goal → שער  • standings/table → טבלה  "
                 "• prediction → תחזית  • confidence → רמת ביטחון  • market value → שווי שוק  "
-                "• overall rating → דירוג כללי  • club → מועדון  • league → ליגה  • season → עונה."
+                "• overall rating → דירוג כללי  • club → מועדון  • league → ליגה  • season → עונה  "
+                "• per 90 / per-90 / per90 → ל-90 דקות (e.g. 'goals per 90' → 'שערים ל-90 דקות')  "
+                "• z-score → ציון תקן."
             )
         lang_directive = SystemMessage(content=directive)
         # History is prepended before the current turn to preserve context across requests.
