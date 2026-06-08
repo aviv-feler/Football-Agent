@@ -1,12 +1,15 @@
 """
 TOOL 5 - Compare two players with a football-readable side-by-side breakdown.
-Primary: FC26 attributes + real stats. Secondary: Jaccard playing-style overlap score.
-The Jaccard computation is kept but the raw internal trait codes are not shown to users.
+Primary: real performance attributes + season stats. Secondary: Jaccard playing-style
+overlap score. The Jaccard computation is kept but the raw internal trait codes are not
+shown to users. The detailed comparison is returned as a structured visual card; the
+text reply stays short so it reads cleanly in the chat bubble.
 """
 
 import pandas as pd
 from langchain.tools import tool
 from ds_engine import jaccard
+from viz import embed_viz
 
 
 def _num(value, default=0):
@@ -14,11 +17,6 @@ def _num(value, default=0):
         return default if value is None or pd.isna(value) else value
     except Exception:
         return default
-
-
-def _bar(v, mx, width=10):
-    filled = round(max(0, min(v, mx)) / mx * width) if mx else 0
-    return "█" * filled + "░" * (width - filled)
 
 
 _READABLE_TRAIT = {
@@ -32,6 +30,8 @@ _READABLE_TRAIT = {
     "val":    "market tier",
 }
 
+_METHOD = "🔍 Method: Jaccard similarity on categorical traits + attribute comparison."
+
 
 def make_compare_players_jaccard_tool(engine):
     df = engine.df
@@ -39,34 +39,32 @@ def make_compare_players_jaccard_tool(engine):
     @tool
     def compare_players_jaccard(players: str) -> str:
         """
-        Compare two players side by side: FC26 attributes, real stats (goals, assists,
-        minutes), playing-style overlap, and key differences. Use for "compare X and Y",
-        "X vs Y", "who is better — X or Y?".
+        Compare two players side by side: performance attributes, real stats (goals,
+        assists, minutes), playing-style overlap, and key differences. Use for
+        "compare X and Y", "X vs Y", "who is better — X or Y?".
         Input: two player names separated by 'vs', 'and', or a comma.
         Example: 'Mbappé vs Vinicius Jr'.
         """
         import re as _re
         parts = [p.strip() for p in _re.split(r"\s+vs\.?\s+|,\s*|\s+and\s+|\s+ו-?", players) if p.strip()]
         if len(parts) < 2:
-            return (
-                "Provide two players, e.g. 'Mbappé vs Vinicius Jr'."
-                "\n\n🔍 Method: Jaccard similarity on categorical traits + FC26 attribute comparison."
-            )
+            return f"Provide two players, e.g. 'Mbappé vs Vinicius Jr'.\n\n{_METHOD}"
 
         i1, i2 = engine.find_index(parts[0]), engine.find_index(parts[1])
         if i1 is None:
-            return f"Player not found: '{parts[0]}'.\n\n🔍 Method: Jaccard similarity on categorical traits + FC26 attribute comparison."
+            return f"Player not found: '{parts[0]}'.\n\n{_METHOD}"
         if i2 is None:
-            return f"Player not found: '{parts[1]}'.\n\n🔍 Method: Jaccard similarity on categorical traits + FC26 attribute comparison."
+            return f"Player not found: '{parts[1]}'.\n\n{_METHOD}"
 
         r1, r2 = df.iloc[i1], df.iloc[i2]
-        n1, n2 = r1["player_name"], r2["player_name"]
+        n1, n2 = str(r1["player_name"]), str(r2["player_name"])
 
-        # Jaccard for style overlap — computed but shown as a single clean score
+        # Jaccard for style overlap — computed but shown as a single clean score.
         s1, s2 = engine.trait_set(i1), engine.trait_set(i2)
         j = jaccard(s1, s2)
+        overlap = round(j * 100, 1)
 
-        # Shared readable traits (exclude internal codes)
+        # Shared readable traits (exclude internal codes).
         readable_shared = []
         for trait in sorted(s1 & s2):
             prefix = trait.split(":")[0] if ":" in trait else ""
@@ -75,9 +73,9 @@ def make_compare_players_jaccard_tool(engine):
                 continue
             value  = trait.split(":", 1)[1] if ":" in trait else trait
             readable_shared.append(f"{label}: {value}" if label != "skip" else None)
-        readable_shared = [x for x in readable_shared if x]
+        readable_shared = [x for x in readable_shared if x][:4]
 
-        # FC26 attributes
+        # Numeric attribute bars (real performance attributes, 0-99 scale).
         ATTRS = [
             ("Pace",      "fc_pace"),
             ("Shooting",  "fc_shooting"),
@@ -86,47 +84,66 @@ def make_compare_players_jaccard_tool(engine):
             ("Defending", "fc_defending"),
             ("Physical",  "fc_physic"),
         ]
-        attr_lines = []
+        attr_viz = []
         for label, col in ATTRS:
             v1, v2 = int(_num(r1.get(col))), int(_num(r2.get(col)))
             if not v1 and not v2:
                 continue
-            winner = f" ← {n1}" if v1 > v2 + 3 else (f" ← {n2}" if v2 > v1 + 3 else "")
-            attr_lines.append(f"  {label:<12} {v1:>3}  {_bar(v1,99)}  {_bar(v2,99)}  {v2:<3}{winner}")
+            attr_viz.append({"k": label, "a": v1, "b": v2})
 
-        ovr1, ovr2 = int(_num(r1.get("fc_overall"))), int(_num(r2.get("fc_overall")))
-        pot1, pot2 = int(_num(r1.get("fc_potential"))), int(_num(r2.get("fc_potential")))
-
-        lines = [
-            f"**{n1}  vs  {n2}**\n",
-            f"{'':14} {n1[:14]:<14}  {n2[:14]:<14}",
-            f"{'Position':<14} {r1.get('sub_position','?')[:14]:<14}  {r2.get('sub_position','?')[:14]:<14}",
-            f"{'Club':<14} {str(r1.get('club','?'))[:14]:<14}  {str(r2.get('club','?'))[:14]:<14}",
-            f"{'Archetype':<14} {str(r1.get('archetype','?'))[:14]:<14}  {str(r2.get('archetype','?'))[:14]:<14}",
-            f"{'OVR / POT':<14} {ovr1} / {pot1:<9}  {ovr2} / {pot2}",
-            f"{'Goals':<14} {int(_num(r1.get('goals'))):<14}  {int(_num(r2.get('goals')))}",
-            f"{'Assists':<14} {int(_num(r1.get('assists'))):<14}  {int(_num(r2.get('assists')))}",
-            f"{'Minutes':<14} {int(_num(r1.get('minutes_played'))):,<14}  {int(_num(r2.get('minutes_played'))):,}",
-            "\n**FC26 Attributes:**",
-            f"  {'Attribute':<12} {'':>3}  {n1[:10]:<12}  {n2[:10]:<12}",
-        ] + attr_lines + [
-            f"\n**Playing style overlap: {round(j*100,1)}%**",
-        ]
-        if readable_shared:
-            lines.append(f"Both: {', '.join(readable_shared[:4])}")
-
-        # Who wins each area
-        area_wins = []
+        # Who leads each area (>5 pts), grouped per player for a clean insight line.
+        edges = []
         for label, col in ATTRS:
             v1, v2 = int(_num(r1.get(col))), int(_num(r2.get(col)))
             if v1 > v2 + 5:
-                area_wins.append(f"{n1} leads in {label.lower()}")
+                edges.append(f"{n1} leads in {label.lower()}")
             elif v2 > v1 + 5:
-                area_wins.append(f"{n2} leads in {label.lower()}")
-        if area_wins:
-            lines.append("\nKey edges: " + " · ".join(area_wins[:4]))
+                edges.append(f"{n2} leads in {label.lower()}")
+        edges = edges[:4]
 
-        lines.append("\n🔍 Method: Jaccard similarity on categorical traits + FC26 attribute comparison.")
-        return "\n".join(lines)
+        ovr1, ovr2 = int(_num(r1.get("fc_overall"))), int(_num(r2.get("fc_overall")))
+        pot1, pot2 = int(_num(r1.get("fc_potential"))), int(_num(r2.get("fc_potential")))
+        g1, g2 = int(_num(r1.get("goals"))), int(_num(r2.get("goals")))
+        a1, a2 = int(_num(r1.get("assists"))), int(_num(r2.get("assists")))
+        m1, m2 = int(_num(r1.get("minutes_played"))), int(_num(r2.get("minutes_played")))
+
+        stats = [{"k": "OVR / POT", "a": f"{ovr1} / {pot1}", "b": f"{ovr2} / {pot2}"}]
+        if g1 or g2:
+            stats.append({"k": "Goals", "a": g1, "b": g2})
+        if a1 or a2:
+            stats.append({"k": "Assists", "a": a1, "b": a2})
+        if m1 or m2:
+            stats.append({"k": "Minutes", "a": f"{m1:,}", "b": f"{m2:,}"})
+
+        def _sub(row):
+            pos = str(row.get("sub_position", "") or "").strip()
+            club = str(row.get("club", "") or "").strip()
+            return " · ".join([p for p in (pos, club) if p and p != "?"])
+
+        viz = {
+            "type": "compare",
+            "a": n1, "b": n2,
+            "a_sub": _sub(r1), "b_sub": _sub(r2),
+            "arch_a": str(r1.get("archetype", "") or "").strip(),
+            "arch_b": str(r2.get("archetype", "") or "").strip(),
+            "overlap": overlap,
+            "stats": stats,
+            "attrs": attr_viz,
+            "both": readable_shared,
+            "edges": edges,
+        }
+
+        # Short, clean text reply — the card carries the detailed numbers, so we don't
+        # re-list them here (and there are no ASCII bars that misalign in the bubble).
+        text_lines = [f"**{n1} vs {n2}**", ""]
+        summary = f"{overlap}% playing-style overlap."
+        if readable_shared:
+            summary += f" Shared: {', '.join(readable_shared)}."
+        text_lines.append(summary)
+        if edges:
+            text_lines.append("Key edges: " + " · ".join(edges) + ".")
+        text_lines += ["", _METHOD]
+
+        return embed_viz("\n".join(text_lines), viz)
 
     return compare_players_jaccard

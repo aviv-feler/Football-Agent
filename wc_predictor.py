@@ -517,7 +517,7 @@ def format_wc_top_scorer(result: dict) -> str:
             f"{c['goals_per90']:<7} {c['shooting']:<6} {c['expected_games']:<8} {c['wc_proj_goals']:.1f}"
         )
     lines.append(f"\n_{result['note']}_")
-    lines.append("\n🔍 Method: Player goal-rate (goals/90) from FBref + FC26 data × expected WC "
+    lines.append("\n🔍 Method: Player goal-rate (goals/90) from FBref + player-attribute data × expected WC "
                  "games (Monte Carlo R32/R16/QF/SF/Final stage probabilities) × shooting quality. "
                  "Candidates restricted to official 2026 squads; ranked by projected tournament goals.")
     from viz import embed_viz

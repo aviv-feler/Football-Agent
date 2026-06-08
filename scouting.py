@@ -698,7 +698,7 @@ def generate_scouting_response(result: dict) -> str:
             + (f" | caveats: {', '.join(c['weaknesses'])}" if c["weaknesses"] else "")
         )
     method = {
-        "similar": "Role-weighted similarity (weighted Euclidean on FC26 + per-90 features) within position group.",
+        "similar": "Role-weighted similarity (weighted Euclidean on performance attributes + per-90 features) within position group.",
         "replacement": "Role-weighted similarity + multi-factor score (potential, current ability, age fit, data reliability), same role, optional club exclusion.",
         "profile": "Target-profile vector + role-weighted similarity + multi-factor ranking, filtered by position/age/potential.",
         "wonderkid": "Age/potential filter + role-weighted profile similarity, potential-led multi-factor ranking.",

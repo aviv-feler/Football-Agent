@@ -457,7 +457,39 @@
   .pf-track { height: 6px; background: rgba(255,255,255,.05); border-radius: 4px; overflow: hidden; }
   .pf-track i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--blue), var(--violet)); }
   .pf-v { font-family: var(--font-mono); font-size: .74rem; color: var(--text); text-align: right; }
-  @media (max-width: 480px) { .pf-attrs { grid-template-columns: 1fr; } .cmp-row { grid-template-columns: 1fr 78px 1fr; } }
+
+  /* player comparison */
+  .cm-head { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .cm-nm { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .cm-nm b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: .92rem; }
+  .cm-nm small { font-size: .68rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cm-nm.a { text-align: left; } .cm-nm.a b { color: var(--blue-bright); }
+  .cm-nm.b { text-align: right; align-items: flex-end; } .cm-nm.b b { color: var(--violet-soft); }
+  .cm-vs { font-size: .6rem; letter-spacing: 1px; color: var(--text-dim); font-weight: 700; padding: 3px 8px; border: 1px solid var(--hairline); border-radius: 12px; }
+  .cm-arch { display: flex; justify-content: space-between; gap: 8px; margin: -2px 0 11px; }
+  .cm-arch em { font-style: normal; font-size: .64rem; color: var(--violet-soft); background: rgba(155,107,255,.12); border: 1px solid rgba(155,107,255,.3); border-radius: 10px; padding: 2px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 48%; }
+  .cm-overlap { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: .72rem; color: var(--text-muted); margin-bottom: 10px; }
+  .cm-overlap b { font-family: var(--font-mono); color: var(--green); font-size: .9rem; }
+  .cm-stats { margin-bottom: 11px; }
+  .cm-stat { display: grid; grid-template-columns: 1fr 92px 1fr; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid var(--hairline); font-size: .84rem; }
+  .cm-stat:first-child { border-top: none; }
+  .cm-stat .sa { text-align: right; font-weight: 600; color: #eaf0ff; font-variant-numeric: tabular-nums; }
+  .cm-stat .sb { text-align: left; font-weight: 600; color: #eaf0ff; font-variant-numeric: tabular-nums; }
+  .cm-stat .sk { text-align: center; font-size: .63rem; letter-spacing: .4px; text-transform: uppercase; color: var(--text-dim); }
+  .cm-attrs { display: flex; flex-direction: column; gap: 7px; }
+  .cm-attr { display: grid; grid-template-columns: 26px 1fr 60px 1fr 26px; align-items: center; gap: 6px; }
+  .cm-attr .av, .cm-attr .bv { font-family: var(--font-mono); font-size: .73rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .cm-attr .av { text-align: right; } .cm-attr .bv { text-align: left; }
+  .cm-attr.la .av { color: var(--blue-bright); font-weight: 700; }
+  .cm-attr.lb .bv { color: var(--violet-soft); font-weight: 700; }
+  .cm-attr .ck { text-align: center; font-size: .64rem; color: var(--text-dim); white-space: nowrap; }
+  .cm-bar { height: 6px; background: rgba(255,255,255,.06); border-radius: 4px; position: relative; overflow: hidden; }
+  .cm-bar i { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+  .cm-bar.l i { right: 0; background: linear-gradient(90deg, rgba(79,140,255,.45), var(--blue)); }
+  .cm-bar.r i { left: 0; background: linear-gradient(90deg, var(--violet), rgba(155,107,255,.45)); }
+  .cm-both, .cm-edges { font-size: .72rem; color: var(--text-muted); margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+  .cm-edges { color: var(--text-dim); }
+  @media (max-width: 480px) { .pf-attrs { grid-template-columns: 1fr; } .cmp-row { grid-template-columns: 1fr 78px 1fr; } .cm-attr { grid-template-columns: 22px 1fr 48px 1fr 22px; } }
 
   @keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -1118,6 +1150,45 @@
     </div>`);
   }
 
+  function vizCompare(v) {
+    const stats = (v.stats || []).map(s => `<div class="cm-stat">
+      <span class="sa">${_esc(s.a)}</span>
+      <span class="sk">${_esc(s.k)}</span>
+      <span class="sb">${_esc(s.b)}</span></div>`).join('');
+    const attrs = (v.attrs || []).map(a => {
+      const aw = Math.max(4, Math.min(100, a.a / 99 * 100)).toFixed(0);
+      const bw = Math.max(4, Math.min(100, a.b / 99 * 100)).toFixed(0);
+      const lead = a.a > a.b + 3 ? 'la' : (a.b > a.a + 3 ? 'lb' : '');
+      return `<div class="cm-attr ${lead}">
+        <span class="av">${a.a}</span>
+        <span class="cm-bar l"><i style="width:${aw}%"></i></span>
+        <span class="ck">${_esc(a.k)}</span>
+        <span class="cm-bar r"><i style="width:${bw}%"></i></span>
+        <span class="bv">${a.b}</span></div>`;
+    }).join('');
+    const arch = (v.arch_a || v.arch_b)
+      ? `<div class="cm-arch"><em>${_esc(v.arch_a || '—')}</em><em>${_esc(v.arch_b || '—')}</em></div>` : '';
+    const overlap = (v.overlap != null)
+      ? `<div class="cm-overlap"><span>Playing-style overlap</span><b>${_esc(v.overlap)}%</b></div>` : '';
+    const both = (v.both && v.both.length)
+      ? `<div class="cm-both">Shared: ${v.both.map(_esc).join(', ')}</div>` : '';
+    const edges = (v.edges && v.edges.length)
+      ? `<div class="cm-edges">${v.edges.map(_esc).join(' · ')}</div>` : '';
+    return elFrom(`<div class="viz-card cm">
+      <div class="cm-head">
+        <div class="cm-nm a"><b>${_esc(v.a)}</b>${v.a_sub ? `<small>${_esc(v.a_sub)}</small>` : ''}</div>
+        <span class="cm-vs">VS</span>
+        <div class="cm-nm b"><b>${_esc(v.b)}</b>${v.b_sub ? `<small>${_esc(v.b_sub)}</small>` : ''}</div>
+      </div>
+      ${arch}
+      ${overlap}
+      ${stats ? `<div class="cm-stats">${stats}</div>` : ''}
+      ${attrs ? `<div class="cm-attrs">${attrs}</div>` : ''}
+      ${both}
+      ${edges}
+    </div>`);
+  }
+
   function renderVizCard(v) {
     if (!v || !v.type) return null;
     try {
@@ -1126,6 +1197,7 @@
       if (v.type === 'similarity') return vizSimilarity(v);
       if (v.type === 'profile')    return vizProfile(v);
       if (v.type === 'standings')  return vizStandings(v);
+      if (v.type === 'compare')    return vizCompare(v);
     } catch (e) { console.warn('viz render failed', e); }
     return null;
   }
