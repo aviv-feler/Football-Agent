@@ -14,8 +14,8 @@ _Audited against the actual code on branch `main`. Status legend: ✅ DONE · �
 ## Core requirements
 
 ### 1. Free natural-language agent (Hebrew + English) — ✅ DONE
-- LLM-first agent: `agent.py` `ScoutAgent.invoke` → `_run_tool_loop` lets Gemini read the
-  question, choose tools, and narrate. Not a menu.
+- LLM-first agent: `agent.py` `ScoutAgent.invoke` → `_run_tool_loop` lets the LLM (OpenAI
+  GPT-5.5) read the question, choose tools, and narrate. Not a menu.
 - Language handling: `_detect_language` (`agent.py`) detects Hebrew by Unicode range and adds a
   language directive; verified live — Hebrew and English both answer in-language.
 
@@ -31,14 +31,14 @@ Runtime sources actually used:
 6. **Historical match results** → `data/national_matches.csv`, `data/club_matches.csv`, `data/games.csv`.
 7. **Precomputed DS artifacts** → `data/player_features.npy`, `data/feature_meta.json`.
 
-### 3. Similarity model (real, not Gemini) — ⚠️ PARTIAL
+### 3. Similarity model (real, not the LLM) — ⚠️ PARTIAL
 - **Jaccard — ✅ active & real.** `tools/compare_players_jaccard.py` → `ds_engine.jaccard()` on
   categorical trait sets (`ds_engine.trait_set`: position, sub_position, nationality, foot, league,
   age_bucket, value_tier, archetype). Example: *"Compare Mbappé and Vinicius Jr."*
 - **Similar-players — ✅ real, but it's weighted EUCLIDEAN, not cosine.**
   Active tool = `tools/scouting_tools.py` `find_similar_player` → `scouting.calculate_weighted_similarity`
   (`scouting.py:164`): `dist = sqrt(Σ w·(C−t)²)`, `sim = 1/(1+dist)` on normalized FC26 + per-90
-  features. Real numeric computation, not Gemini. Example: *"Find players similar to Rodri."*
+  features. Real numeric computation, not the LLM. Example: *"Find players similar to Rodri."*
 - **Cosine similarity — ⚠️ implemented but NOT wired into the live agent.**
   `ds_engine.cosine()` / `cosine_to_vector()` exist and are real, but the cosine tool
   (`tools/find_similar_players.py`) is **not registered** in `build_agent` (confirmed — no import).
@@ -56,7 +56,7 @@ Runtime sources actually used:
 ### 5. Recommendations / content-based scouting (real) — ✅ DONE
 - `tools/scouting_tools.py`: `search_by_profile`, `find_wonderkids`, `find_replacement` →
   `scouting.py` weighted-similarity + multi-factor ranking (potential, current ability, age fit,
-  data reliability). Real, not Gemini. Example: *"Find a young creative attacking midfielder with high potential."*
+  data reliability). Real, not the LLM. Example: *"Find a young creative attacking midfielder with high potential."*
 
 ### 6. Anomaly detection (Z-score, real, exposed) — ✅ DONE
 - `tools/detect_anomalies.py` → `ds_engine.zscores()` (`ds_engine.py:120`):
@@ -64,8 +64,9 @@ Runtime sources actually used:
   and reachable by the user. Example: *"Show overperformers in the Premier League."*
 
 ### 7. NLP / LLM — ✅ DONE
-- Gemini via `langchain_google_genai.ChatGoogleGenerativeAI` (`agent.py`), 5-model rotation
-  (`MODEL_CHAIN`), tool-calling + final NL generation in the user's language.
+- OpenAI via `langchain_openai.ChatOpenAI` (`agent.py`), with a model chain (`MODEL_CHAIN`,
+  default `gpt-5.5` → `gpt-5-mini` → `gpt-4o-mini`) rotated on rate-limit/quota/bad-model
+  errors, tool-calling + final NL generation in the user's language.
 
 ### 8. Domain-limited agent — ❌ MISSING (refusal) / ✅ (domain knowledge)
 - Rich football-domain grounding: ✅ (all tools + datasets are football-only).
@@ -75,7 +76,7 @@ Runtime sources actually used:
   → It will likely answer "capital of France"-type questions. **Gap to fix before demo.**
 
 ### 9. Professor can run it — ✅ deployable / ⚠️ confirm it's actually live
-- `render.yaml` present (gunicorn `app:app`, `GEMINI_API_KEY` + `FOOTBALL_DATA_API_KEY` env vars);
+- `render.yaml` present (gunicorn `app:app`, `OPENAI_API_KEY` + `OPENAI_MODEL` + `FOOTBALL_DATA_API_KEY` env vars);
   runtime data committed; `/healthz` endpoint exists. So it **deploys**.
 - ⚠️ I cannot confirm a **live public URL** is currently up — verify the Render service is deployed
   and reachable, and that both API keys are set there.
@@ -112,7 +113,7 @@ Runtime sources actually used:
 | Match outcome | **Logistic Regression** | squad-strength diffs from `world_cup_2026_squads.csv` + `players_clean.csv`, trained on `national_matches.csv` | **Real** | "Predict Spain vs Morocco" | ✅ |
 | Club scoreline | (RF + GB + Poisson) | `club_matches.csv` | Real model, **not a course algo** | "Score: Chelsea vs Arsenal" | ✅ (mislabeled) |
 | WC winner / top scorer | (Monte Carlo / softmax / RF) | `national_matches.csv`, squads, player goals | Real model, **not a course algo** | "Who wins the World Cup?" | ✅ (mislabeled) |
-| NL understanding/gen | LLM (Gemini) | — | **Real** | any question | ✅ |
+| NL understanding/gen | LLM (OpenAI GPT-5.5) | — | **Real** | any question | ✅ |
 
 ---
 
@@ -126,7 +127,7 @@ Runtime sources actually used:
 | 4 | Clustering (real) | ✅ | `data_prep.py` KMeans → `get_player_archetype.py` | Computed offline, used live |
 | 5 | Recommendations | ✅ | `scouting.py` search/wonderkids | Real weighted similarity |
 | 6 | Anomaly detection | ✅ | `detect_anomalies.py` / `ds_engine.zscores` | Z-score vs cluster, exposed |
-| 7 | NLP / LLM | ✅ | `agent.py` (Gemini) | Tool-calling + generation |
+| 7 | NLP / LLM | ✅ | `agent.py` (OpenAI GPT-5.5) | Tool-calling + generation |
 | 8 | Domain-limited | ❌/⚠️ | `SYSTEM_PROMPT` | Rich domain ✅, **no off-domain refusal** |
 | 9 | Runnable on Render | ✅/⚠️ | `render.yaml`, `/healthz` | Deployable; **confirm live URL** |
 | 10 | Method pills, no Elo/Poisson | ⚠️ | `index.html` PILL_MAP | Pills are course-only, but **non-course models relabeled "Logistic Regression"** |

@@ -1,6 +1,6 @@
 # ScoutAI - Football Scout & Predictor Agent
 
-ScoutAI is a Flask web app with a LangChain/Gemini agent for football scouting,
+ScoutAI is a Flask web app with a LangChain/OpenAI (GPT-5.5) agent for football scouting,
 player comparison, match prediction, live standings, and FIFA World Cup 2026 schedule lookup.
 
 The project is built around precomputed data-science artifacts in `data/` and exposes them
@@ -58,10 +58,12 @@ http://127.0.0.1:5000
 Create a local `.env` file with:
 
 ```text
-GEMINI_API_KEY=...
+OPENAI_API_KEY=...
 FOOTBALL_DATA_API_KEY=...
 ```
 
+The model defaults to `gpt-5.5`; override it with `OPENAI_MODEL` (and optionally
+`OPENAI_FALLBACK_MODEL`, a comma-separated chain used on rate-limit/quota errors).
 `FOOTBALL_DATA_API_KEY` is only needed for live standings. The local player tools and
 World Cup schedule work from the included data files.
 
@@ -106,7 +108,8 @@ python data_prep.py
 Render configuration lives in `render.yaml`. Configure these environment variables in
 the hosting dashboard:
 
-- `GEMINI_API_KEY`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (optional; defaults to `gpt-5.5`)
 - `FOOTBALL_DATA_API_KEY`
 
 The app also exposes `/healthz` for basic hosting health checks.

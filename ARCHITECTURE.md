@@ -18,15 +18,15 @@ Written by reading the real source, not the intended design. Date: 2026-06-05.
 | Predict national/WC match | Hybrid squad-value + World Cup Elo (`ds_engine.build_national_strength` + `tools/predict_match.py`) | ✅ **REAL MODEL** |
 | Live standings / scorers | football-data.org REST API (`tools/get_live_standings.py`) | ✅ **REAL API**, key is configured |
 
-**Gemini does NOT invent any of the numbers, rankings, or probabilities.** Every figure
-in those answers is computed by Python/scikit-learn/your own code. Gemini's job is (a)
-deciding which tool to call and (b) wording the final sentence — and for many queries it
+**The LLM (OpenAI GPT-5.5) does NOT invent any of the numbers, rankings, or probabilities.**
+Every figure in those answers is computed by Python/scikit-learn/your own code. The LLM's job
+is (a) deciding which tool to call and (b) wording the final sentence — and for many queries it
 is bypassed entirely (see §1).
 
 > **UPDATE 2026-06-05 — most of the "ugly bits" below were FIXED.** The agent was
-> restructured to be **Gemini-first**: `ScoutAgent.invoke()` now always lets Gemini reason
+> restructured to be **LLM-first**: `ScoutAgent.invoke()` now always lets the LLM reason
 > and choose tools (so it decides on its own to call the live football-data.org API), and
-> `_direct_tool_answer` is now only a **fallback** used when Gemini is unavailable (quota).
+> `_direct_tool_answer` is now only a **fallback** used when the LLM is unavailable (quota).
 > A new live tool `get_top_scorers` (football-data.org `/scorers`) was added, the
 > `compare_players_jaccard` tool now includes a side-by-side stat block, the heavy unused
 > `FootballQAPipeline` is no longer built at startup, and the dead `embeddings.npy` /
@@ -38,16 +38,17 @@ is bypassed entirely (see §1).
 1. ✅ **FIXED-IN-PRACTICE — `football_qa.py` (≈1,480 lines) is still disabled and now not even
    imported at runtime.** It is no longer constructed (saved a big TF-IDF startup cost). The
    file remains on disk (used only by `test_football_qa.py`); it does not run in the app.
-2. ✅ **FIXED — Gemini now handles every query.** It reasons, calls tools (function-calling),
-   and writes the answer. The keyword router only runs if Gemini hits its quota.
-3. ✅ **FIXED — Hebrew answers.** Because Gemini is now primary, answers come back in the
+2. ✅ **FIXED — the LLM now handles every query.** It reasons, calls tools (function-calling),
+   and writes the answer. The keyword router only runs if the LLM hits its quota.
+3. ✅ **FIXED — Hebrew answers.** Because the LLM is now primary, answers come back in the
    user's language. (Only the rare quota-fallback path returns raw English tool text.)
 4. ✅ **FIXED — dead files deleted** (`embeddings.npy`, `future_match_probabilities_baseline.csv`).
    ⚠️ `data_manager._read_xlsx_sheet()` + the `Football_clubs_players_full.xlsx` constant are
    still present but unused (kept only so the dead `football_qa.py` still imports).
-5. ⚠️ **Still true — primary model `gemini-2.5-flash` has a small free-tier daily quota**; the
-   code rotates to lighter models on 429, and now also falls back to the deterministic tool
-   router so the agent keeps answering even when the quota is gone.
+5. ⚠️ **Still true — the OpenAI account can hit a rate limit / quota (HTTP 429)**; the
+   code rotates to the configured fallback models on 429 (and on 404/unsupported-param
+   errors), and now also falls back to the deterministic tool router so the agent keeps
+   answering even when the LLM is gone.
 6. ⚠️ **Known data-quality caveat — K-Means archetype labels are coarse (only 4 global
    clusters).** A midfielder like Pedri can be labelled "Goalscorer / Poacher". Similarity
    percentages and stats are correct; only the archetype *name* is imprecise. Worth refining
@@ -85,16 +86,16 @@ Numbered flow for a single message:
          world cup/group/fixture   → world_cup_info tool
          best/top/find/striker...  → scout_players tool   (_looks_like_scout_query)
        • If matched: calls tool.invoke(...) and RETURNS THE TOOL'S RAW STRING.
-         >>> Gemini is NOT called. Answer is English, includes the 🔍 Method line. <<<
+         >>> The LLM is NOT called. Answer is English, includes the 🔍 Method line. <<<
 5. (Smart-QA pipeline) — SKIPPED. Guarded by env SCOUTAI_ENABLE_SMART_QA (default off).
 6. If step 4 did not match → LLM TOOL-CALLING LOOP:
        a. Build messages = [system_prompt, session_history, language_directive, user_msg]
-       b. _call_llm(messages): invoke a Gemini model that has the 8 tools bound via
-          llm.bind_tools(tools)  (LangChain function-calling). On HTTP 429 / quota it
-          rotates to the next model in MODEL_CHAIN.
-       c. If Gemini returns tool_calls → run each tool, append ToolMessage(results),
+       b. _call_llm(messages): invoke an OpenAI (GPT-5.5) model that has the tools bound via
+          llm.bind_tools(tools)  (LangChain function-calling). On HTTP 429 / quota / 404 /
+          unsupported-param it rotates to the next model in MODEL_CHAIN.
+       c. If the LLM returns tool_calls → run each tool, append ToolMessage(results),
           loop again (max 5 iterations).
-       d. When Gemini returns text with no tool calls → that text is the final answer.
+       d. When the LLM returns text with no tool calls → that text is the final answer.
           (Fallback: if the text is empty, it retries _direct_tool_answer.)
 7. _remember(session_id, user_input, answer)  → per-session history (max 6 turns).
 8. Return answer string → app.py jsonifies {response, session_id} → browser renders it.
@@ -102,16 +103,16 @@ Numbered flow for a single message:
 
 **Key truths about routing:**
 - There are **two live routers**: (A) the deterministic keyword router
-  `_direct_tool_answer` (runs first, no LLM), and (B) Gemini function-calling (only if A
+  `_direct_tool_answer` (runs first, no LLM), and (B) the OpenAI LLM function-calling (only if A
   misses). For your typical demo queries ("players similar to X", "predict A vs B",
   "best strikers in La Liga", "compare X and Y"), **router A catches them** and returns the
-  tool output directly. Gemini is used mainly for free-form/unmatched questions.
+  tool output directly. The LLM is used mainly for free-form/unmatched questions.
 - Both routers call **the same tool functions** with the same real models. So the numbers
-  are identical either way; the only difference is whether Gemini rewrites the wording.
-- On the Gemini path, the system prompt (`SYSTEM_PROMPT` in `agent.py`) hard-instructs it to
+  are identical either way; the only difference is whether the LLM rewrites the wording.
+- On the LLM path, the system prompt (`SYSTEM_PROMPT` in `agent.py`) hard-instructs it to
   call tools and never answer player/stat questions from memory, and to keep the `🔍 Method:`
   line. This is a *prompt instruction, not an enforced guarantee* — a free-form question that
-  Gemini chooses to answer without a tool can still be ungrounded.
+  the LLM chooses to answer without a tool can still be ungrounded.
 
 ---
 
@@ -125,12 +126,12 @@ Numbered flow for a single message:
     serie a→SA, ligue 1→FL1, champions league→CL, world cup→WC, euro→EC, …).
   - Returns: standings table rows (position, team, P/W/D/L, GF/GA, points) or upcoming
     fixtures.
-- **Is the key real?** Yes. `.env` has `FOOTBALL_DATA_API_KEY` set (32 chars) and
-  `GEMINI_API_KEY` set (53 chars), loaded via `load_dotenv()` in `app.py`. The tool reads
+- **Is the key real?** Yes. `.env` (or the Render dashboard) provides `FOOTBALL_DATA_API_KEY`
+  and `OPENAI_API_KEY`, loaded via `load_dotenv()` in `app.py`. The tool reads
   `os.getenv("FOOTBALL_DATA_API_KEY")`; if it were missing it returns a graceful "not
   configured" message instead of crashing.
 - **When does a live call happen?** Only when the user asks about standings / league table
-  (router A keyword `standings`/`table`/`טבלה`, or Gemini choosing the tool). Similar-player,
+  (router A keyword `standings`/`table`/`טבלה`, or the LLM choosing the tool). Similar-player,
   scouting, prediction, archetype, anomaly, and compare queries make **no** API call — they
   use local data.
 - **Caveat for the demo:** asking for **World Cup 2026 standings** via this tool will likely
@@ -143,29 +144,32 @@ Numbered flow for a single message:
 
 ---
 
-## 3. Gemini model — which one exactly?
+## 3. LLM — which model exactly?
 
-- **Configured in `agent.py`**, `MODEL_CHAIN` (~line 81):
+- **Provider:** OpenAI, via `langchain-openai`'s `ChatOpenAI` (no Google/Gemini anywhere).
+- **Configured in `agent.py`**, `MODEL_CHAIN` (~line 191) is built from env vars at import:
   ```
-  MODEL_CHAIN = ["gemini-2.5-flash",        # primary (model_idx starts at 0)
-                 "gemini-flash-latest",
-                 "gemini-2.5-flash-lite",
-                 "gemini-flash-lite-latest",
-                 "gemini-2.0-flash"]
+  _PRIMARY_MODEL   = os.getenv("OPENAI_MODEL")          or "gpt-5.5"
+  _FALLBACK_MODELS = os.getenv("OPENAI_FALLBACK_MODEL")  or "gpt-5-mini,gpt-4o-mini"
+  MODEL_CHAIN      = [primary, *fallbacks]   # de-duplicated, order preserved
   ```
-  Each is wrapped with `ChatGoogleGenerativeAI(model=..., temperature=0.3, max_retries=0)`
-  and `.bind_tools(tools)` in `build_agent()`. `_call_llm()` tries the current model and, on
-  `429 / RESOURCE_EXHAUSTED`, rotates to the next one.
-- **Exact primary string:** `gemini-2.5-flash`. These are real Google model identifiers; the
-  `-latest` ones are floating aliases. They are not obviously deprecated, **but verify against
-  Google's current model list before the demo** — and note the practical issue: per project
-  history, `gemini-2.5-flash` has a *small* free-tier daily request quota, which is exactly why
-  the rotation-on-429 logic exists. If you hammer it during a demo it can 429 and silently
-  fall to a lighter model.
-- **Gemini's role:** strictly (1) decide which tool to call (function-calling) on the LLM
+  So by default `MODEL_CHAIN == ["gpt-5.5", "gpt-5-mini", "gpt-4o-mini"]`. `render.yaml` sets
+  `OPENAI_MODEL=gpt-5.5`.
+- **How each model is wrapped** (`build_agent()`): `ChatOpenAI(model=..., api_key=...,
+  max_retries=0)` then `.bind_tools(tools)`. GPT-5 / o-series are reasoning models, so instead
+  of `temperature` they get `reasoning_effort` (default `"low"`, override with
+  `OPENAI_REASONING_EFFORT`) — keeping effort low cut narration latency from ~15s to ~4–6s.
+  Non-reasoning models (e.g. `gpt-4o-mini`) get `temperature=0.3` instead.
+- **Rotation:** `_call_llm()` tries the current model and rotates to the next one in the chain
+  on rate-limit/quota (`429`, `rate_limit`, `insufficient_quota`), transient server errors
+  (`500/502/503`, `overloaded`, `unavailable`), or **bad-model/param errors** (`404`,
+  `model_not_found`, `does not exist`, `unsupported value`, `reasoning_effort`). That last
+  group means a stale or renamed primary string falls back to a valid model instead of
+  hard-failing the request.
+- **The LLM's role:** strictly (1) decide which tool to call (function-calling) on the LLM
   path, and (2) phrase the final natural-language answer / translate it to the user's
   language. **It does not generate the data, numbers, rankings, or probabilities** — those
-  come from the tools. On the keyword (`_direct_tool_answer`) path, Gemini is not involved at
+  come from the tools. On the keyword (`_direct_tool_answer`) path, the LLM is not involved at
   all.
 
 ---
@@ -208,21 +212,21 @@ Numbered flow for a single message:
   K-Means clusters/scaler *are* persisted (`feature_meta.json` + `player_features.npy`).
 - **`predict_match` routing:** if both names resolve to known clubs → Poisson model; if both
   resolve to nations → hybrid model; otherwise a graceful "couldn't build a prediction"
-  message. Gemini does not compute any of these probabilities.
+  message. The LLM does not compute any of these probabilities.
 - **Honest caveats:** cross-league club matches (e.g. Man City vs Bayern) are approximate
-  (factors are league-relative); national history is only 4 World Cups; Gemini is not the
+  (factors are league-relative); national history is only 4 World Cups; the LLM is not the
   predictor in any case.
 
 ### C) Scout / filter queries — ✅ REAL MODEL
 - **Live code:** `tools/scout_players.py`.
-- **NL → filters:** done in **Python with regex/keyword maps**, *not* by Gemini. It parses
+- **NL → filters:** done in **Python with regex/keyword maps**, *not* by the LLM. It parses
   position keywords, age phrases ("under 23", "young", "veteran"), region/continent and
   nationality (incl. Hebrew aliases), league, and World Cup mentions, applying hard filters.
 - **Ranking:** builds an "ideal" target vector by emphasizing relevant features, then
   `cosine_to_vector` similarity **blended 50/50 with a market-value quality score**
   (`0.5*cosine + 0.5*log market value`). The market-value blend exists because pure cosine
   returned obscure players. Output top 5 with the `🔍 Method:` line.
-- Gemini only rewords this if the query reaches the LLM path; the ranking itself is the model.
+- The LLM only rewords this if the query reaches the LLM path; the ranking itself is the model.
 
 ### Also real (not in your three but graded):
 - **Archetype** (`tools/get_player_archetype.py`): K-Means cluster membership + centroid's
@@ -236,7 +240,7 @@ Numbered flow for a single message:
 
 **Bottom line for the professor:** every core capability is a real algorithm on real data.
 The only "faking" risk is the narrow case where a free-form question slips past the keyword
-router *and* Gemini answers it without calling a tool — then you get LLM prose, not model
+router *and* the LLM answers it without calling a tool — then you get LLM prose, not model
 output. For the scripted demo queries, that won't happen.
 
 ---
@@ -289,5 +293,5 @@ output. For the scripted demo queries, that won't happen.
 - `data/embeddings.npy` (73 MB) and `data/future_match_probabilities_baseline.csv`: safe to
   delete — no code loads them.
 - The `_direct_tool_answer` path returns English tool output even for Hebrew questions
-  (no translation). If bilingual answers matter for the demo, route those through the Gemini
+  (no translation). If bilingual answers matter for the demo, route those through the LLM
   path or translate the tool output.
