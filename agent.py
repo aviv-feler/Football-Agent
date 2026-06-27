@@ -162,6 +162,10 @@ DATA SOURCES & ATTRIBUTION (be honest — never claim a source you didn't use):
   national-team player's CURRENT club, use get_national_squad (official 2026 squad clubs).
 - Only state a data source that an actual tool result gave you (its "🔍 Method:" line).
 
+FORMAT — find_similar_player results: present them EXACTLY as the tool returns them — one
+compact line per player (rank · name · similarity% · club · nationality, age). Keep that
+shape (translate the words if answering in Hebrew). Do NOT add OVR/POT/fit/archetype/caveats,
+do NOT turn each player into a paragraph, and do NOT re-introduce the old multi-line cards.
 ALWAYS keep the "🔍 Method:" line from tool outputs — required for academic grading.
 NEVER invent stats. If you cite a number, it must come from a tool result."""
 
@@ -1175,9 +1179,20 @@ class ScoutAgent:
             self._remember(session_id, user_input, clean)
             return clean, viz
         direct = self._direct_tool_answer(user_input, history=history)
-        if direct and any(term in user_input.lower() for term in [
-            "similar", "plays like", "replacement", "wonderkid", "scout", "find player", "find players",
-        ]):
+        # Return the deterministic, already-formatted scouting card verbatim instead of
+        # letting the LLM re-narrate it (which re-expands the compact "similar" cards back
+        # into verbose prose). The trigger-word list misses phrasings the router itself
+        # handles ("players like X", Hebrew), so also short-circuit when the parsed intent
+        # is a scouting one. Kept to English so Hebrew questions still get a Hebrew answer
+        # from the LLM (the deterministic text is English-only).
+        _scout_intent = parse_scouting_query(user_input).get("intent")
+        if direct and (
+            (self._detect_language(user_input) == "English"
+             and _scout_intent in ("similar", "replacement", "wonderkid"))
+            or any(term in user_input.lower() for term in [
+                "similar", "plays like", "replacement", "wonderkid", "scout", "find player", "find players",
+            ])
+        ):
             clean, viz = split_viz(direct)
             self._remember(session_id, user_input, clean)
             return clean, viz
