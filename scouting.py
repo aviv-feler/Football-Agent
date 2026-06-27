@@ -709,6 +709,16 @@ def generate_scouting_response(result: dict) -> str:
     _is_ranking = (t == "profile" and _role in ROLE_POSITIONS)
     lines = [f"**{head}**\n"]
     for i, c in enumerate(result["candidates"], 1):
+        # "Similar players" gets a focused two-line card: identity + how similar +
+        # what they're good at. For a "who plays like X?" question, OVR/POT/fit/
+        # archetype/caveats are noise (archetype is already in the header), so they
+        # are intentionally dropped here to keep the answer short and readable.
+        if t == "similar":
+            lines.append(
+                f"{i}. **{c['player_name']}** — {c['position']} · {c['club']} · {c['nationality']} · age {c['age']}\n"
+                f"   {c['similarity']}% similar · {', '.join(c['strengths'])}"
+            )
+            continue
         ovr = f"OVR {c['overall']}" if c["overall"] else "OVR n/a"
         pot = f"POT {c['potential']}" if c["potential"] else "POT n/a"
         if _is_ranking:
