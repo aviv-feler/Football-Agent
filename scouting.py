@@ -674,6 +674,34 @@ def _detect_country(text: str, q: str) -> str:
     return ""
 
 
+# Long official club names ("Galatasaray Spor Kulübü", "Real Madrid Club de Fútbol",
+# "Manchester City Football Club") are noise in a compact list. Strip the generic
+# corporate phrases/tokens so the common short name remains.
+_CLUB_NOISE_PHRASES = [
+    "club de fútbol", "club de futbol", "fútbol club", "futbol club",
+    "football club", "fussball club", "fußball club", "spor kulübü", "spor kulubu",
+    "associazione sportiva", "società sportiva", "societa sportiva",
+    "sporting club", "sport club", "athletic club", "calcio",
+]
+_CLUB_NOISE_TOKENS = {"fc", "cf", "ac", "sc", "afc", "ssc", "as", "us", "rc",
+                      "cd", "ud", "sd", "bk", "sk", "if", "fk",
+                      "club", "clube", "klub", "de", "fútbol", "futbol", "futebol"}
+
+
+def _short_club(name: str) -> str:
+    """Trim generic club-name boilerplate, keeping the recognisable short name."""
+    raw = (name or "").strip()
+    if not raw:
+        return raw
+    out = raw
+    for phrase in _CLUB_NOISE_PHRASES:
+        out = re.sub(re.escape(phrase), " ", out, flags=re.IGNORECASE)
+    tokens = [t for t in re.split(r"\s+", out)
+              if t and t.lower().strip(".") not in _CLUB_NOISE_TOKENS]
+    cleaned = re.sub(r"\s{2,}", " ", " ".join(tokens)).strip(" -–—·")
+    return cleaned or raw
+
+
 def generate_scouting_response(result: dict) -> str:
     """Render the engine result as structured scouting cards (the LLM then narrates)."""
     if not result or not result.get("candidates"):
@@ -693,8 +721,7 @@ def generate_scouting_response(result: dict) -> str:
     else:
         _profile_head = f"Best matches for profile '{_role}'{_from_str} (key traits: {_traits}):"
     head = {
-        "similar": f"Players most similar to {result.get('reference')} "
-                   f"(role: {_role}, archetype: {result.get('reference_archetype')}):",
+        "similar": f"🎯 Most like {result.get('reference')} · {_role.replace('_', ' ')}",
         "replacement": f"Replacement options for {result.get('reference')}"
                        + (f" (excluding {result.get('club')})" if result.get("club") else "") + ":",
         "profile": _profile_head,
@@ -709,14 +736,16 @@ def generate_scouting_response(result: dict) -> str:
     _is_ranking = (t == "profile" and _role in ROLE_POSITIONS)
     lines = [f"**{head}**\n"]
     for i, c in enumerate(result["candidates"], 1):
-        # "Similar players" gets a focused two-line card: identity + how similar +
-        # what they're good at. For a "who plays like X?" question, OVR/POT/fit/
-        # archetype/caveats are noise (archetype is already in the header), so they
-        # are intentionally dropped here to keep the answer short and readable.
+        # "Similar players" gets one tight line per player: rank + name + how similar +
+        # club + nationality/age. For a "who plays like X?" question, OVR/POT/fit/
+        # archetype/caveats/strengths are noise (the side card already shows strengths),
+        # so they are dropped here to keep the answer short and scannable.
         if t == "similar":
+            medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
+            nat = str(c.get("nationality", "?")).split(",")[0].strip()
             lines.append(
-                f"{i}. **{c['player_name']}** — {c['position']} · {c['club']} · {c['nationality']} · age {c['age']}\n"
-                f"   {c['similarity']}% similar · {', '.join(c['strengths'])}"
+                f"{medal} {c['player_name']} · {round(float(c['similarity']))}% · "
+                f"{_short_club(c.get('club', ''))} ({nat}, {c['age']})"
             )
             continue
         ovr = f"OVR {c['overall']}" if c["overall"] else "OVR n/a"
@@ -732,7 +761,7 @@ def generate_scouting_response(result: dict) -> str:
             + (f" | caveats: {', '.join(c['weaknesses'])}" if c["weaknesses"] else "")
         )
     method = {
-        "similar": "Role-weighted cosine similarity between player vectors (performance attributes + per-90 features), within the same position group.",
+        "similar": "Role-weighted cosine similarity (same position group).",
         "replacement": "Role-weighted similarity + multi-factor score (potential, current ability, age fit, data reliability), same role, optional club exclusion.",
         "profile": "Target-profile vector + role-weighted similarity + multi-factor ranking, filtered by position/age/potential.",
         "wonderkid": "Age/potential filter + role-weighted profile similarity, potential-led multi-factor ranking.",
@@ -749,7 +778,7 @@ def generate_scouting_response(result: dict) -> str:
         "name": c["player_name"],
         "pct": float(c["fit"]),  # always composite fit so card order matches text order
         "pos": c["position"],
-        "sub": c.get("club") or "",
+        "sub": (_short_club(c.get("club", "")) if t == "similar" else (c.get("club") or "")),
         "tags": (c.get("strengths") or [])[:3],
     } for c in result["candidates"][:5]]
     viz = {"type": "similarity", "title": title, "metric": "fit", "items": items}
